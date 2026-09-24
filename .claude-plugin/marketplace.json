@@ -7,7 +7,7 @@
     {
       "name": "tsserverd",
       "source": "./plugins/tsserverd",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "TypeScript/JavaScript LSP that shares one tsserver per project root across Claude Code sessions instead of one per session. Works on Windows.",
       "category": "development",
       "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/tsserverd",

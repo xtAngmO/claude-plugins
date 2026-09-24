@@ -23,7 +23,8 @@ let mode = "waiting"; // waiting → connecting → connected | direct
 let sock = null;
 let direct = null;
 let exiting = false;  // the session is leaving; a closed socket is expected now
-const buffered = [];  // read before we knew where to send it; replayed in order
+let buffered = [];    // read before we knew where to send it; replayed in order
+let unanswered = null; // sent to the daemon before it said anything back
 
 if (process.env.TSD_DISABLE) {
   runDirect("TSD_DISABLE is set", true);
@@ -37,7 +38,11 @@ if (process.env.TSD_DISABLE) {
 
 function onSessionMessage(msg) {
   if (msg?.method === "exit") exiting = true;
-  if (mode === "connected") { sock.write(encode(msg)); return; }
+  if (mode === "connected") {
+    unanswered?.push(msg);
+    sock.write(encode(msg));
+    return;
+  }
   if (mode === "direct") { direct.stdin.write(encode(msg)); return; }
   buffered.push(msg);
   if (mode === "waiting" && msg?.method === "initialize") begin(msg);
@@ -105,10 +110,26 @@ function launchDaemon(root) {
 function onConnected(s) {
   sock = s;
   mode = "connected";
-  for (const msg of buffered.splice(0)) s.write(encode(msg));
-  s.on("data", (d) => process.stdout.write(d));
+  // Kept until the daemon first answers. If it closes before that — its backend
+  // died during initialize, or it was idling out as we connected — nothing has
+  // reached the session yet, so the same messages can go to a server of our own.
+  unanswered = buffered;
+  buffered = [];
+  for (const msg of unanswered) s.write(encode(msg));
+  s.on("data", (d) => {
+    unanswered = null;
+    process.stdout.write(d);
+  });
   s.on("error", () => {});
   s.on("close", () => {
+    if (unanswered && !exiting) {
+      buffered = unanswered;
+      unanswered = null;
+      sock = null;
+      mode = "connecting";
+      runDirect("daemon closed before answering");
+      return;
+    }
     if (!exiting) log("daemon went away mid-session; exiting so Claude Code restarts LSP");
     process.exit(exiting ? 0 : 1);
   });

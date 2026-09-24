@@ -27,8 +27,11 @@ Reading `status`:
 
 If diagnostics are missing, run `doctor` first. `backend NOT FOUND` means
 `typescript-language-server` is not installed:
-`npm install -g typescript-language-server typescript`. The lifecycle log is
-at `<tmp>/tsserverd/tsserverd.log`.
+`npm install -g typescript-language-server typescript@6`. Keep the `@6`:
+TypeScript 7 has no `tsserver.js`, so `typescript-language-server` rejects it,
+and the log then shows "Could not find a valid TypeScript installation". The
+lifecycle log is at `<tmp>/tsserverd/tsserverd.log` (the folder is
+`tsserverd-<uid>` on Linux and macOS).
 
 Stop a daemon only when the user asks. Every session attached to it loses LSP
 until it reconnects.

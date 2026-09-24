@@ -96,6 +96,27 @@ test("a failed initialize fails every waiting session and tells the daemon", () 
   assert.equal(ctx.events.initFailed, 1);
 });
 
+test("an initialized sent before initialize is answered reaches the backend after it", () => {
+  const ctx = setup();
+  const a = ctx.join();
+  ctx.broker.fromClient(a, { jsonrpc: "2.0", id: 0, method: "initialize", params: {} });
+  ctx.broker.fromClient(a, { jsonrpc: "2.0", method: "initialized", params: {} });
+  assert.deepEqual(methods(ctx.backend), ["initialize"]);
+  ctx.broker.fromBackend({ jsonrpc: "2.0", id: ctx.backend[0].id, result: {} });
+  assert.deepEqual(methods(ctx.backend), ["initialize", "initialized"]);
+  ctx.broker.fromClient(a, { jsonrpc: "2.0", method: "initialized", params: {} });
+  assert.deepEqual(methods(ctx.backend), ["initialize", "initialized"]);
+});
+
+test("cancelling the shared initialize is not passed on", () => {
+  const ctx = setup();
+  const a = ctx.join();
+  ctx.join();
+  ctx.broker.fromClient(a, { jsonrpc: "2.0", id: 0, method: "initialize", params: {} });
+  ctx.broker.fromClient(a, { jsonrpc: "2.0", method: "$/cancelRequest", params: { id: 0 } });
+  assert.deepEqual(methods(ctx.backend), ["initialize"]);
+});
+
 test("two sessions using the same request id get their own answers", () => {
   const ctx = setup();
   const a = ctx.join();
@@ -161,6 +182,26 @@ test("a later opener with newer text updates the shared copy", () => {
     jsonrpc: "2.0", method: "textDocument/didChange",
     params: { textDocument: { uri: "file:///x.ts", version: 2 }, contentChanges: [{ text: "new" }] },
   });
+});
+
+test("a late opener with a stale read does not roll the shared copy back", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsd-broker-"));
+  const file = path.join(dir, "z.ts");
+  const uri = pathToFileURL(file).href;
+  try {
+    const ctx = setup();
+    const a = ctx.join();
+    const b = ctx.join();
+    initialize(ctx, a);
+    ctx.broker.fromClient(a, open(uri, "old"));
+    fs.writeFileSync(file, "new");                      // a writes the file…
+    ctx.broker.fromClient(a, change(uri, "new", 2));    // …and reports it
+    ctx.backend.length = 0;
+    ctx.broker.fromClient(b, open(uri, "old"));         // b read before a wrote, arrives after
+    assert.deepEqual(ctx.backend[0].params.contentChanges, [{ text: "new" }]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("versions only ever go up for the backend, whatever the sessions number", () => {
@@ -330,6 +371,21 @@ test("a server request is refused for the backend when its session leaves first"
 
   ctx.broker.fromBackend({ jsonrpc: "2.0", id: 2, method: "workspace/configuration", params: { items: [] } });
   assert.equal(b.inbox.at(-1).method, "workspace/configuration");
+});
+
+test("the backend cancelling its request reaches only that session, under our id", () => {
+  const ctx = setup();
+  const a = ctx.join();
+  const b = ctx.join();
+  initialize(ctx, a);
+  a.inbox.length = 0;
+  ctx.broker.fromBackend({ jsonrpc: "2.0", id: 7, method: "workspace/configuration", params: { items: [] } });
+  const muxId = a.inbox[0].id;
+  ctx.broker.fromBackend({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id: 7 } });
+  assert.deepEqual(a.inbox[1], { jsonrpc: "2.0", method: "$/cancelRequest", params: { id: muxId } });
+  assert.deepEqual(b.inbox, []);
+  ctx.broker.fromBackend({ jsonrpc: "2.0", method: "$/cancelRequest", params: { id: 99 } });
+  assert.equal(a.inbox.length, 2);
 });
 
 test("other notifications reach every session", () => {

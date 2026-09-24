@@ -5,6 +5,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -19,7 +20,8 @@ process.env.TSD_NAMESPACE = `it-${process.pid}`;
 process.env.TSD_LOG ??= path.join(RUN_DIR, "test.log");
 process.env.TSD_IDLE_MS = "1500";
 
-const { createReader, encode, isAlive, rootKey, statusFile } = await import("../src/lib.mjs");
+const { createReader, encode, endpointFor, ensureRunDir, isAlive, rootKey, statusFile } = await import("../src/lib.mjs");
+ensureRunDir();
 const { resolveBackend } = await import("../src/backend.mjs");
 const { docKey } = await import("../src/broker.mjs");
 const skip = resolveBackend(["--stdio"]) ? false : "typescript-language-server is not installed";
@@ -175,6 +177,51 @@ test("a session that dies without saying goodbye is detached", { skip, timeout: 
   while (readStatus().clients !== 1 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
   assert.equal(readStatus().clients, 1);
   await a.close();
+});
+
+test("sessions starting together end up on one daemon (over a crashed daemon's socket on unix)", { skip, timeout: 120000 }, async () => {
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "tsd-it-race-"));
+  const endpoint = endpointFor(rootKey(other));
+  if (process.platform !== "win32") {
+    // Leave a socket file with nobody behind it, the way a SIGKILLed daemon does.
+    const holder = spawn(process.execPath, ["-e", `require("net").createServer().listen(${JSON.stringify(endpoint)}, () => console.log("up"))`], { stdio: ["ignore", "pipe", "inherit"] });
+    await new Promise((resolve) => holder.stdout.once("data", resolve));
+    holder.kill("SIGKILL");
+    await new Promise((resolve) => holder.on("exit", resolve));
+    assert.ok(fs.existsSync(endpoint), "stale socket left behind");
+  }
+  const params = { processId: process.pid, rootUri: pathToFileURL(other).href, capabilities: {} };
+  const group = [startSession(), startSession(), startSession()];
+  try {
+    const answers = await Promise.all(group.map((s) => s.request("initialize", params)));
+    for (const a of answers) assert.ok(a.result?.capabilities);
+    const status = JSON.parse(fs.readFileSync(statusFile(rootKey(other)), "utf8"));
+    assert.equal(status.clients, 3, "all three on the same daemon");
+    for (const s of group) { await s.request("shutdown", null); s.notify("exit", null); await s.exited; }
+    process.kill(status.daemonPid);
+  } finally {
+    await new Promise((r) => setTimeout(r, 300));
+    fs.rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test("a daemon that hangs up before answering costs nothing: the shim runs the server itself", { skip, timeout: 120000 }, async () => {
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "tsd-it-hangup-"));
+  // Stands in for a daemon whose backend died during initialize.
+  const liar = net.createServer((sock) => sock.destroy());
+  await new Promise((resolve) => liar.listen(endpointFor(rootKey(other)), resolve));
+  try {
+    const s = startSession();
+    const res = await s.request("initialize", { processId: process.pid, rootUri: pathToFileURL(other).href, capabilities: {} });
+    assert.ok(res.result?.capabilities, "initialize answered by the fallback server");
+    s.notify("initialized", {});
+    await s.request("shutdown", null);
+    s.notify("exit", null);
+    await s.exited;
+  } finally {
+    liar.close();
+    fs.rmSync(other, { recursive: true, force: true });
+  }
 });
 
 test("TSD_DISABLE runs the real server directly", { skip, timeout: 120000 }, async () => {

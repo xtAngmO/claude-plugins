@@ -25,7 +25,13 @@ plugins/tsserverd/                 one tsserver per project root, shared by ever
 - To try a change in a real session without installing it:
   `claude --plugin-dir plugins/tsserverd --settings '{"enabledPlugins":{"typescript-lsp@claude-plugins-official":false}}'`
 - Set `TSD_NAMESPACE=<anything>` to keep an experiment away from the daemons your real sessions use.
-- The lifecycle log is at `<os tmpdir>/tsserverd/tsserverd.log`.
+- The lifecycle log is at `<os tmpdir>/tsserverd/tsserverd.log`. The folder is `tsserverd-<uid>` on Linux and macOS.
+- To exercise the unix socket path from Windows, use WSL with a throwaway node:
+  1. Unpack a node tarball under `/tmp`.
+  2. Run `npm i -g --prefix /tmp/x typescript-language-server typescript@6`.
+  3. Copy the plugin into `/tmp` and run `node --test "test/*.test.mjs"` with `PATH` set to only those bin dirs plus `/usr/bin:/bin`.
+
+  If you leave the default PATH, WSL finds the Windows launchers through interop.
 
 ## Releasing
 
@@ -38,4 +44,6 @@ plugins/tsserverd/                 one tsserver per project root, shared by ever
 - **Windows:** Node cannot listen on a file path, so the endpoint must be a named pipe.
 - **Windows:** npm's extensionless launcher is a sh script, and `.cmd` needs `shell: true`. tsserverd runs `lib/cli.mjs` with `process.execPath` instead.
 - **Windows:** typescript-language-server respells `file:///D:/x` as `file:///d%3A/x` in diagnostics. Compare documents by `docKey()`, never by uri string.
+- **TypeScript 7:** `npm i -g typescript` now installs TS 7, which has no `tsserver.js`. typescript-language-server then fails `initialize`. Install `typescript@6` globally. Supporting TS 7 would mean a second backend (`tsc --lsp --stdio`), which does not exist yet.
+- **Unix sockets:** the socket file outlives a crashed daemon. The takeover is serialized by `<endpoint>.lock`, and the endpoint only counts as dead on `ECONNREFUSED`. The daemon listens on a private name and renames it into place, because libuv unlinks the listened-on path when the server closes.
 - **Diagnostics timing:** Claude Code hands diagnostics to the model on the *next* tool call after an edit. A session that ends its turn right after editing never shows them. That is Claude Code's behaviour, not a delivery bug.

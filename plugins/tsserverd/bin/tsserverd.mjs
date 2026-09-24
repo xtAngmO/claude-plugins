@@ -13,7 +13,16 @@ import { IS_WINDOWS, isAlive, runDir } from "../src/lib.mjs";
 
 const gb = (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 
-function readStatuses() {
+// A killed daemon never removes its status file, and the temp dir survives a
+// reboot, so a recorded pid can belong to anything by now. Trust it only while
+// that pid is still running our daemon.mjs; without a process table (the OS
+// would not say), fall back to "the pid exists".
+function isOurDaemon(pid, procs) {
+  if (!procs.length) return isAlive(pid);
+  return procs.some((p) => p.pid === pid && /daemon\.mjs/i.test(p.cmd));
+}
+
+function readStatuses(procs) {
   let files = [];
   try { files = fs.readdirSync(runDir()).filter((f) => f.endsWith(".status.json")); } catch { return []; }
   const live = [];
@@ -21,8 +30,8 @@ function readStatuses() {
     const file = path.join(runDir(), f);
     try {
       const s = JSON.parse(fs.readFileSync(file, "utf8"));
-      if (isAlive(s.daemonPid)) live.push(s);
-      else fs.unlinkSync(file); // a daemon that was killed never cleaned up
+      if (isOurDaemon(s.daemonPid, procs)) live.push(s);
+      else fs.unlinkSync(file);
     } catch {}
   }
   return live;
@@ -71,8 +80,8 @@ function treeOf(rootPid, procs) {
 const isTsserver = (p) => /tsserver\.js/i.test(p.cmd) && !/typingsInstaller/i.test(p.cmd);
 
 function status() {
-  const daemons = readStatuses();
   const procs = processTable();
+  const daemons = readStatuses(procs);
   const owned = new Set();
   let sharedBytes = 0;
 
@@ -101,7 +110,7 @@ function doctor() {
   console.log(`node        ${process.execPath} (${process.version})`);
   console.log(`runtime dir ${runDir()}`);
   if (!spec) {
-    console.log("backend     NOT FOUND — install it: npm i -g typescript-language-server typescript");
+    console.log("backend     NOT FOUND — install it: npm i -g typescript-language-server typescript@6");
     process.exitCode = 1;
     return;
   }
@@ -109,7 +118,7 @@ function doctor() {
 }
 
 function stop() {
-  const daemons = readStatuses();
+  const daemons = readStatuses(processTable());
   for (const s of daemons) {
     try { process.kill(s.daemonPid, "SIGTERM"); console.log(`stopped ${s.root} (daemon ${s.daemonPid})`); } catch {}
   }

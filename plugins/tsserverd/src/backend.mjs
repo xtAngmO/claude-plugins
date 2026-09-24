@@ -40,9 +40,15 @@ function isFile(p) {
   try { return fs.statSync(p).isFile(); } catch { return false; }
 }
 
+// With `shell: true` Node joins command and args unquoted, so a launcher under
+// `C:\Users\John Smith\…` would run as `C:\Users\John`.
+function viaShell(cmd, args) {
+  return { command: `"${cmd}"`, args, shell: true, describe: cmd };
+}
+
 function fromExplicit(p, args) {
   if (/\.[cm]?js$/i.test(p)) return { command: process.execPath, args: [p, ...args], shell: false, describe: p };
-  if (IS_WINDOWS && /\.(cmd|bat)$/i.test(p)) return { command: p, args, shell: true, describe: p };
+  if (IS_WINDOWS && /\.(cmd|bat)$/i.test(p)) return viaShell(p, args);
   return { command: p, args, shell: false, describe: p };
 }
 
@@ -61,7 +67,7 @@ export function resolveBackend(args, env = process.env) {
   for (const dir of dirs) {
     if (IS_WINDOWS) {
       const cmd = path.join(dir, `${PKG}.cmd`);
-      if (isFile(cmd)) return { command: cmd, args, shell: true, describe: cmd };
+      if (isFile(cmd)) return viaShell(cmd, args);
     } else {
       const bin = path.join(dir, PKG);
       if (isFile(bin)) return { command: bin, args, shell: false, describe: bin };

@@ -126,29 +126,81 @@ function onConnection(sock) {
   sock.on("close", () => { broker.removeClient(client); writeStatus(); });
 }
 
-function listen(retried = false) {
+const standDown = (why) => { log(why, ROOT); process.exit(0); };
+
+function onListening() {
+  log("listening on", ENDPOINT, "for", ROOT);
+  startBackend();
+  writeStatus();
+  scheduleIdleExit(); // in case the shim that launched us is already gone
+}
+
+// Windows: a named pipe name can be held by one server only, so the pipe is
+// the lock. Losing the race is normal — several shims can launch at once — and
+// the backend starts only once we own the pipe, so losers never cost a tsserver.
+function listenWindows() {
   server = net.createServer(onConnection);
-  server.once("error", (e) => {
-    if (e.code === "EADDRINUSE" && !IS_WINDOWS && !retried) {
-      // A socket file nobody answers on is a daemon that crashed; take its place.
-      const probe = net.connect(ENDPOINT);
-      probe.once("connect", () => { probe.destroy(); log("another daemon already serves", ROOT); process.exit(0); });
-      probe.once("error", () => { try { fs.unlinkSync(ENDPOINT); } catch {} listen(true); });
-      return;
+  server.once("error", (e) => standDown(e.code === "EADDRINUSE" ? "another daemon already serves" : `listen failed: ${e.message}`));
+  server.listen(ENDPOINT, onListening);
+}
+
+// Unix: a socket file outlives a crashed daemon, so "the path exists" proves
+// nothing and taking it over has to be serialized:
+//   * one daemon at a time holds <endpoint>.lock (O_EXCL);
+//   * a path only counts as dead on ECONNREFUSED — a full backlog is alive;
+//   * we listen on a private name and rename it into place, and later unlink
+//     the endpoint only if it is still our socket. libuv unlinks the name a
+//     server listened on when it closes, which is now the private name, so a
+//     successor's socket is never deleted from under it.
+let socketIno = null;
+const LOCK = `${ENDPOINT}.lock`;
+
+function takeLock() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { fs.closeSync(fs.openSync(LOCK, "wx", 0o600)); return true; } catch (e) {
+      if (e.code !== "EEXIST") return false;
+      // A daemon that died holding it; the window it guards is milliseconds.
+      try { if (Date.now() - fs.statSync(LOCK).mtimeMs > 10_000) { fs.unlinkSync(LOCK); continue; } } catch { continue; }
+      return false;
     }
-    // Losing this race is normal: several shims can launch at once.
-    log(e.code === "EADDRINUSE" ? "another daemon already serves" : `listen failed: ${e.message}`, ROOT);
-    process.exit(0);
+  }
+  return false;
+}
+const dropLock = () => { try { fs.unlinkSync(LOCK); } catch {} };
+
+function endpointState() {
+  return new Promise((resolve) => {
+    const probe = net.connect(ENDPOINT);
+    probe.once("connect", () => { probe.destroy(); resolve("alive"); });
+    probe.once("error", (e) => resolve(e.code === "ECONNREFUSED" ? "dead" : e.code === "ENOENT" ? "absent" : "alive"));
   });
-  // The endpoint is the lock: the backend starts only once we own it, so the
-  // daemons that lose the race never cost a tsserver.
-  server.listen(ENDPOINT, () => {
-    if (!IS_WINDOWS) { try { fs.chmodSync(ENDPOINT, 0o600); } catch {} }
-    log("listening on", ENDPOINT, "for", ROOT);
-    startBackend();
-    writeStatus();
-    scheduleIdleExit(); // in case the shim that launched us is already gone
+}
+
+async function listenUnix() {
+  if (!takeLock()) return standDown("another daemon is starting");
+  const state = await endpointState();
+  if (state === "alive") { dropLock(); return standDown("another daemon already serves"); }
+  const privateName = `${ENDPOINT}.${process.pid}`;
+  try { fs.unlinkSync(privateName); } catch {}
+  server = net.createServer(onConnection);
+  server.once("error", (e) => { dropLock(); standDown(`listen failed: ${e.message}`); });
+  server.listen(privateName, () => {
+    try {
+      fs.chmodSync(privateName, 0o600);
+      fs.renameSync(privateName, ENDPOINT); // replaces a dead socket atomically
+      socketIno = fs.statSync(ENDPOINT).ino;
+    } catch (e) {
+      dropLock();
+      return standDown(`could not take ${ENDPOINT}: ${e.message}`);
+    }
+    dropLock();
+    onListening();
   });
+}
+
+function releaseEndpoint() {
+  if (IS_WINDOWS || socketIno === null) return;
+  try { if (fs.statSync(ENDPOINT).ino === socketIno) fs.unlinkSync(ENDPOINT); } catch {}
 }
 
 function stop(code) {
@@ -156,7 +208,7 @@ function stop(code) {
   stopping = true;
   clearTimeout(idleTimer);
   try { server?.close(); } catch {}
-  if (!IS_WINDOWS) { try { fs.unlinkSync(ENDPOINT); } catch {} }
+  releaseEndpoint();
   try { fs.unlinkSync(STATUS); } catch {}
   if (!backend || backend.exitCode !== null || backend.signalCode !== null) process.exit(code);
   backend.once("exit", () => process.exit(code));
@@ -171,4 +223,5 @@ process.on("SIGTERM", () => stop(0));
 process.on("SIGINT", () => stop(0));
 process.on("uncaughtException", (e) => { log("crash:", e.stack ?? e.message); stop(1); });
 
-listen();
+if (IS_WINDOWS) listenWindows();
+else listenUnix();

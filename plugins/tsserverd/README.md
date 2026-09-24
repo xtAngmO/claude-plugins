@@ -29,11 +29,13 @@ Claude session C ─ shim ─┘
 
 ## Install
 
-You need Node 18.20 or newer, plus `typescript-language-server` and `typescript` on your PATH. The official plugin needs the same:
+You need Node 18.20 or newer, plus `typescript-language-server` and TypeScript 6 or older installed globally. The official plugin needs the same:
 
 ```sh
-npm install -g typescript-language-server typescript
+npm install -g typescript-language-server typescript@6
 ```
+
+Pin `@6`. Since TypeScript 7.0 (July 2026), a plain `npm install -g typescript` installs the native compiler, which ships no `tsserver.js`. With it, `typescript-language-server` fails every `initialize` with *"Could not find a valid TypeScript installation"*. The official plugin fails the same way.
 
 Then in Claude Code:
 
@@ -77,7 +79,7 @@ tsserverd reads these environment variables from the environment Claude Code run
 | `TSD_IDLE_MS` | `600000` | How long a daemon waits with no sessions before it exits. |
 | `TSD_DISABLE` | unset | Set it to `1` to skip the daemon and behave exactly like the official plugin. |
 | `TSD_REAL_TLS` | found on PATH | The `typescript-language-server` to run: its `lib/cli.mjs` or a launcher. |
-| `TSD_LOG` | `<tmp>/tsserverd/tsserverd.log` | The lifecycle log. It records one line per event and no message traffic. |
+| `TSD_LOG` | `<tmp>/tsserverd/tsserverd.log` (`tsserverd-<uid>` on Linux and macOS) | The lifecycle log. It records one line per event and no message traffic. |
 
 ## What is shared, and what is not
 

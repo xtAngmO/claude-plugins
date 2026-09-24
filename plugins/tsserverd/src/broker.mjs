@@ -59,7 +59,7 @@ export class Broker {
   #nextServerRequest = 0;
   #pending = new Map();        // backend id -> { client, clientId, isInit }
   #serverRequests = new Map(); // id we gave a session -> { backendId, client }
-  #init = { state: "none", result: null, error: null, queue: [], initializedSent: false };
+  #init = { state: "none", result: null, error: null, queue: [], initializedSent: false, initializedEarly: null };
   #docs = new Map();           // docKey -> { uri, openers: Set<client>, text: string | undefined }
   #versions = new Map();       // docKey -> last version the backend saw; never reset
 
@@ -132,7 +132,11 @@ export class Broker {
     switch (msg.method) {
       case "initialize": return this.#initialize(client, msg);
       case "initialized":
-        if (this.#init.state === "done" && !this.#init.initializedSent) {
+        if (this.#init.initializedSent) return;
+        // Early (initialize still pending) it is held, not dropped: the backend
+        // must see exactly one, after its own initialize answer.
+        if (this.#init.state === "pending") { this.#init.initializedEarly = msg; return; }
+        if (this.#init.state === "done") {
           this.#init.initializedSent = true;
           this.#toBackend(msg);
         }
@@ -154,7 +158,10 @@ export class Broker {
       }
       case "$/cancelRequest": {
         const gid = client.idMap.get(idKey(msg.params?.id));
-        if (gid !== undefined) this.#toBackend({ ...msg, params: { ...msg.params, id: gid } });
+        // Never the shared initialize: cancelling it would fail every session
+        // waiting on it and take the daemon down.
+        if (gid === undefined || this.#pending.get(gid)?.isInit) return;
+        this.#toBackend({ ...msg, params: { ...msg.params, id: gid } });
         return;
       }
     }
@@ -200,6 +207,17 @@ export class Broker {
       // A version, if the backend ever sends one, is in our numbering, not theirs.
       const { version: _version, ...params } = msg.params;
       for (const c of doc.openers) c.send({ ...msg, params });
+      return;
+    }
+
+    // The backend withdrawing one of its own requests: only the session holding
+    // it knows the id, and it knows it by the one we gave it.
+    if (msg.method === "$/cancelRequest") {
+      for (const [muxId, entry] of this.#serverRequests) {
+        if (entry.backendId !== msg.params?.id) continue;
+        entry.client.send({ ...msg, params: { ...msg.params, id: muxId } });
+        return;
+      }
       return;
     }
 
@@ -249,6 +267,11 @@ export class Broker {
     }
     init.state = "done";
     init.result = msg.result ?? null;
+    if (init.initializedEarly && !init.initializedSent) {
+      init.initializedSent = true;
+      this.#toBackend(init.initializedEarly);
+    }
+    init.initializedEarly = null;
     for (const q of queue) if (q.client.alive) q.client.send({ jsonrpc: "2.0", id: q.id, result: init.result });
   }
 
@@ -266,10 +289,11 @@ export class Broker {
       return;
     }
     doc.openers.add(client);
-    // Open already for another session. This one read the file later, so its
-    // copy is the fresher view of disk — and pushing it even when unchanged is
-    // what makes the backend publish diagnostics this session has never seen.
-    this.#pushText(key, doc, text);
+    // Open already for another session. This session may have read the file
+    // before the other one wrote it and still arrive later, so disk decides,
+    // not arrival order. Pushed even when unchanged: that is what makes the
+    // backend publish diagnostics this session has never seen.
+    this.#pushText(key, doc, readDisk(doc.uri) ?? text);
   }
 
   #didChange(client, msg) {

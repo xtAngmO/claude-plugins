@@ -25,8 +25,12 @@ export function rootKey(root) {
   return createHash("sha1").update(`${user}\0${ns}\0${normalizeRoot(root)}`).digest("hex").slice(0, 16);
 }
 
+// Per user: on Linux the temp dir is one /tmp for everybody, and a second user
+// would get EACCES on the first one's directory and wait out every connect.
 export function runDir() {
-  return process.env.TSD_RUN_DIR || path.join(os.tmpdir(), "tsserverd");
+  if (process.env.TSD_RUN_DIR) return process.env.TSD_RUN_DIR;
+  const uid = typeof process.getuid === "function" ? `-${process.getuid()}` : "";
+  return path.join(os.tmpdir(), `tsserverd${uid}`);
 }
 
 export function ensureRunDir() {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { resolveBackend } from "../src/backend.mjs";
 
 const PKG = "typescript-language-server";
@@ -55,12 +56,23 @@ test("only a launcher on PATH: use it", { skip: process.platform === "win32" && 
   assert.deepEqual(resolveBackend(["--stdio"], { PATH: dir }), { command: path.join(dir, PKG), args: ["--stdio"], shell: false, describe: path.join(dir, PKG) });
 }));
 
-test("only a .cmd on PATH (Windows): run it through a shell", { skip: process.platform !== "win32" && "windows launcher" }, () => withTemp((dir) => {
+test("only a .cmd on PATH (Windows): run it through a shell, quoted", { skip: process.platform !== "win32" && "windows launcher" }, () => withTemp((dir) => {
   fs.writeFileSync(path.join(dir, PKG), "#!/bin/sh\n"); // never pick the sh script
   fs.writeFileSync(path.join(dir, `${PKG}.cmd`), "@echo off\n");
   const spec = resolveBackend(["--stdio"], { PATH: dir });
-  assert.equal(spec.command, path.join(dir, `${PKG}.cmd`));
+  assert.equal(spec.command, `"${path.join(dir, `${PKG}.cmd`)}"`);
   assert.equal(spec.shell, true);
+}));
+
+test("a .cmd under a path with a space actually runs (Windows)", { skip: process.platform !== "win32" && "windows launcher" }, () => withTemp((dir) => {
+  const spaced = path.join(dir, "John Smith");
+  fs.mkdirSync(spaced);
+  const cmd = path.join(spaced, `${PKG}.cmd`);
+  fs.writeFileSync(cmd, "@echo launched %1\r\n");
+  const spec = resolveBackend(["--stdio"], { PATH: spaced });
+  const out = spawnSync(spec.command, spec.args, { shell: spec.shell, encoding: "utf8", windowsHide: true });
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stdout, /launched --stdio/);
 }));
 
 test("nothing installed: null", () => withTemp((dir) => {

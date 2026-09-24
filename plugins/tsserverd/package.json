@@ -1,6 +1,6 @@
 {
   "name": "tsserverd",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Share one TypeScript language server per project root across Claude Code sessions.",
   "type": "module",
