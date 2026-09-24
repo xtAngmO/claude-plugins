@@ -1,0 +1,13 @@
+{
+  "name": "tsserverd",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Share one TypeScript language server per project root across Claude Code sessions.",
+  "type": "module",
+  "engines": { "node": ">=18.20" },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "status": "node bin/tsserverd.mjs status"
+  },
+  "license": "MIT"
+}

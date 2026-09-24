@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-plugin-marketplace.json",
+  "name": "xtangmo",
+  "owner": { "name": "xtAngmO", "url": "https://github.com/xtAngmO" },
+  "description": "Claude Code plugins by xtAngmO.",
+  "plugins": [
+    {
+      "name": "tsserverd",
+      "source": "./plugins/tsserverd",
+      "version": "1.0.0",
+      "description": "TypeScript/JavaScript LSP that shares one tsserver per project root across Claude Code sessions instead of one per session. Works on Windows.",
+      "category": "development",
+      "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/tsserverd",
+      "repository": "https://github.com/xtAngmO/claude-plugins",
+      "license": "MIT",
+      "keywords": ["typescript", "lsp", "tsserver", "memory", "windows"]
+    }
+  ]
+}

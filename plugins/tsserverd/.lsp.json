@@ -1,0 +1,16 @@
+{
+  "typescript": {
+    "command": "node",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/src/shim.mjs", "--stdio"],
+    "extensionToLanguage": {
+      ".ts": "typescript",
+      ".tsx": "typescriptreact",
+      ".mts": "typescript",
+      ".cts": "typescript",
+      ".js": "javascript",
+      ".jsx": "javascriptreact",
+      ".mjs": "javascript",
+      ".cjs": "javascript"
+    }
+  }
+}

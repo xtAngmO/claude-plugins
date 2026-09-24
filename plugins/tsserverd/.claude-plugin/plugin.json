@@ -1,0 +1,10 @@
+{
+  "name": "tsserverd",
+  "version": "1.0.0",
+  "description": "TypeScript/JavaScript LSP for Claude Code that shares one tsserver per project root across all sessions, instead of starting a 2-4 GB tsserver in every session. Works on Windows.",
+  "author": { "name": "xtAngmO", "url": "https://github.com/xtAngmO" },
+  "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/tsserverd",
+  "repository": "https://github.com/xtAngmO/claude-plugins",
+  "license": "MIT",
+  "keywords": ["typescript", "lsp", "tsserver", "memory", "windows"]
+}
