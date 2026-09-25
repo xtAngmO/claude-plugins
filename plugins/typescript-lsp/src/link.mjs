@@ -32,6 +32,10 @@ const REQUEST_FAILED = -32803;
 const FAILURE_WINDOW_MS = 2 * 60 * 1000;
 const FAILURE_LIMIT = 3;
 const FAILED_PAUSE_MS = 5 * 60 * 1000;
+// After an open or an edit the session is owed diagnostics, and they come as
+// a notification, not an answer: nothing in flight says the server is still
+// busy for us. Hold the link for them, but not for ever.
+const DIAGNOSTICS_WAIT_MS = 60 * 1000;
 
 export const idKey = (id) => JSON.stringify(id);
 
@@ -133,6 +137,7 @@ export class ProjectLink {
   #pausedUntil = 0;
   #openTransport;
   #initTimeoutMs;
+  #awaitingDiagnostics = new Map(); // docKey → when the open/edit was sent
 
   // hooks: onMessage(link, msg) for everything the session should see;
   // reopen(link) → [{ uri, languageId, version, text }] the session has open here.
@@ -151,6 +156,9 @@ export class ProjectLink {
 
   send(msg) {
     this.lastUsed = Date.now();
+    if (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange") {
+      this.#awaitingDiagnostics.set(docKey(msg.params?.textDocument?.uri), this.lastUsed);
+    }
     if (msg.method === "$/cancelRequest" && this.#dropQueued(msg.params?.id)) return;
     if (this.state === "ready") { this.#write(msg); return; }
     if (this.state === "failed") {
@@ -172,6 +180,9 @@ export class ProjectLink {
   // to the shared daemon again even if this connection was a private one.
   release() {
     if (this.state !== "ready" || this.inflight.size > 0) return false;
+    const now = Date.now();
+    for (const [key, at] of this.#awaitingDiagnostics) if (now - at > DIAGNOSTICS_WAIT_MS) this.#awaitingDiagnostics.delete(key);
+    if (this.#awaitingDiagnostics.size > 0) return false;
     const t = this.#transport;
     this.#transport = null;
     this.state = "idle";
@@ -242,6 +253,7 @@ export class ProjectLink {
     }
     if (msg.id === BYE_ID && msg.method === undefined) return;
     if (msg.method === undefined) this.inflight.delete(idKey(msg.id));
+    if (msg.method === "textDocument/publishDiagnostics") this.#awaitingDiagnostics.delete(docKey(msg.params?.uri));
     this.onMessage(this, msg);
   }
 
@@ -273,6 +285,7 @@ export class ProjectLink {
     const kind = this.#transport?.kind;
     this.#transport = null;
     clearTimeout(this.#initTimer);
+    this.#awaitingDiagnostics.clear(); // that server is gone; the re-open starts over
     if (this.state === "connecting" && kind === "shared" && !this.#initAnswered) {
       // The daemon hung up (or went silent) before initialize was answered: its
       // backend died on start, or it was idling out as we arrived. Nothing

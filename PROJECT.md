@@ -6,7 +6,9 @@ A Claude Code plugin marketplace (`xtangmo`). It is public on GitHub as `xtAngmO
 
 ```
 .claude-plugin/marketplace.json   the catalog; each entry has "source": "./plugins/<name>"
-plugins/tsserverd/                 one tsserver per TypeScript project, shared by every session
+plugins/typescript-lsp/            one tsserver per TypeScript project, shared by every session
+                                   (named like the official plugin it replaces; the engine
+                                   inside is "tsserverd": CLI, skill, log dir, TSD_* settings)
   .claude-plugin/plugin.json       the plugin manifest
   .lsp.json                        Claude Code starts `node src/shim.mjs --stdio` for TS/JS files
   src/shim.mjs                     per session: wiring only (TSD_DISABLE = plain passthrough)
@@ -21,7 +23,7 @@ plugins/tsserverd/                 one tsserver per TypeScript project, shared b
   src/lib.mjs                      LSP framing, root keys, endpoint names
   bin/tsserverd.mjs                the status / doctor / stop CLI
   skills/tsserverd/SKILL.md        lets Claude run the CLI when asked
-  test/                            node:test; `npm test` inside plugins/tsserverd
+  test/                            node:test; `npm test` inside plugins/typescript-lsp
 ```
 
 The two layers: **router + link** make one session look like one LSP client per project.
@@ -30,13 +32,13 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 
 ## Working on tsserverd
 
-- Run `npm test` in `plugins/tsserverd`. It covers:
+- Run `npm test` in `plugins/typescript-lsp`. It covers:
   - unit tests of the broker, the router and project resolution;
   - backend resolution;
   - an integration suite with the real `typescript-language-server`. Its fixture projects link `node_modules/typescript` to the global one. The suite is skipped if that server is not installed.
 - To measure memory against the official plugin on a real repo, run N LSP clients each way and sum the working set of their process trees. See the 1.1.0 commit for the numbers.
 - To try a change in a real session without installing it:
-  `claude --plugin-dir plugins/tsserverd --settings '{"enabledPlugins":{"typescript-lsp@claude-plugins-official":false}}'`
+  `claude --plugin-dir plugins/typescript-lsp --settings '{"enabledPlugins":{"typescript-lsp@claude-plugins-official":false}}'`
 - Set `TSD_NAMESPACE=<anything>` to keep an experiment away from the daemons your real sessions use.
 - The lifecycle log is at `<os tmpdir>/tsserverd/tsserverd.log`. The folder is `tsserverd-<uid>` on Linux and macOS.
 - To exercise the unix socket path from Windows, use WSL with a throwaway node:

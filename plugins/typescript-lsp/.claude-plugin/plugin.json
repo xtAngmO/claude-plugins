@@ -1,12 +1,12 @@
 {
-  "name": "tsserverd",
-  "version": "1.1.0",
+  "name": "typescript-lsp",
+  "version": "1.1.1",
   "description": "TypeScript/JavaScript LSP for Claude Code: one tsserver per project, shared by every session (instead of a 2-4 GB tsserver per session), checked with the project's own TypeScript, released when idle. Works on Windows.",
   "author": {
     "name": "xtAngmO",
     "url": "https://github.com/xtAngmO"
   },
-  "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/tsserverd",
+  "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/typescript-lsp",
   "repository": "https://github.com/xtAngmO/claude-plugins",
   "license": "MIT",
   "keywords": [

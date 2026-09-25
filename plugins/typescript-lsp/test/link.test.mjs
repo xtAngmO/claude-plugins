@@ -144,6 +144,17 @@ test("cancelling a queued request answers it once and never sends it", async () 
   assert.equal(h.current().written.some((m) => m.id === 1), false);
 });
 
+test("a link still owed diagnostics for an open or edit is not released", async () => {
+  const h = harness();
+  const uri = "file:///p/a.ts";
+  h.link.send(open(uri));
+  await tick();
+  h.answerInit();
+  assert.equal(h.link.release(), false, "the server has not published diagnostics yet");
+  h.current().answer({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri, diagnostics: [] } });
+  assert.equal(h.link.release(), true);
+});
+
 test("release only when nothing is in flight", async () => {
   const h = harness();
   h.link.send(hover(1));

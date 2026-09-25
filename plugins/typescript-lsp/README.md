@@ -1,6 +1,8 @@
-# tsserverd
+# typescript-lsp (xtangmo)
 
-A TypeScript/JavaScript language server plugin for Claude Code. It runs **one tsserver per TypeScript project** and shares it with every Claude Code session that touches that project. The official plugin starts one tsserver per session. tsserverd works on Windows, macOS and Linux.
+A drop-in replacement for the official `typescript-lsp` plugin for Claude Code. It runs **one tsserver per TypeScript project** and shares it with every Claude Code session that touches that project. The official plugin starts one tsserver per session. It works on Windows, macOS and Linux.
+
+Inside, the engine is called **tsserverd**. That is the name of its status CLI, its skill, its log folder and its `TSD_*` settings.
 
 ## Why
 
@@ -60,7 +62,7 @@ Then in Claude Code:
 
 ```
 /plugin marketplace add xtAngmO/claude-plugins
-/plugin install tsserverd@xtangmo
+/plugin install typescript-lsp@xtangmo
 /plugin disable typescript-lsp@claude-plugins-official
 ```
 
@@ -71,7 +73,7 @@ Claude Code uses one language server per file extension, so the official plugin 
 Ask Claude for *"tsserverd status"*, or run the CLI yourself:
 
 ```sh
-node ~/.claude/plugins/cache/xtangmo/tsserverd/<version>/bin/tsserverd.mjs status
+node ~/.claude/plugins/cache/xtangmo/typescript-lsp/<version>/bin/tsserverd.mjs status
 ```
 
 Example output:
