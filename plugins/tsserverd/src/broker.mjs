@@ -51,6 +51,7 @@ export class Broker {
   #memoryDefault;
   #onEmpty;
   #onInitFailed;
+  #onInitialize;
 
   #clients = new Set();
   #primary = null;
@@ -71,6 +72,7 @@ export class Broker {
     memoryDefault,
     onEmpty = () => {},
     onInitFailed = () => {},
+    onInitialize = () => {},
   }) {
     this.#toBackend = toBackend;
     this.#log = log;
@@ -79,6 +81,7 @@ export class Broker {
     this.#memoryDefault = memoryDefault;
     this.#onEmpty = onEmpty;
     this.#onInitFailed = onInitFailed;
+    this.#onInitialize = onInitialize;
   }
 
   get clientCount() { return this.#clients.size; }
@@ -234,24 +237,22 @@ export class Broker {
     const params = msg.params ?? {};
     const options = params.initializationOptions ?? {};
     const gid = this.#track(client, msg.id, true);
-    this.#toBackend({
-      ...msg,
-      id: gid,
-      params: {
-        ...params,
-        // The backend exits when `processId` dies. Given the first session's pid it
-        // would take LSP down for every attached session when that one closed, so
-        // it watches the daemon; each shim watches its own session instead.
-        processId: this.#pid,
-        initializationOptions: {
-          ...options,
-          // One tsserver now holds every project the sessions touch, so the V8
-          // default (~4 GB) is too small, and no cap at all is how a single
-          // instance reached 61.5 GB in anthropics/claude-code#87301.
-          maxTsServerMemory: this.#memoryOverride ?? options.maxTsServerMemory ?? this.#memoryDefault,
-        },
+    const forwarded = {
+      ...params,
+      // The backend exits when `processId` dies. Given the first session's pid it
+      // would take LSP down for every attached session when that one closed, so
+      // it watches the daemon; each shim watches its own session instead.
+      processId: this.#pid,
+      initializationOptions: {
+        ...options,
+        // A large repo can outgrow the V8 default (~4 GB) on its own, and no cap
+        // at all is how a single instance reached 61.5 GB in
+        // anthropics/claude-code#87301.
+        maxTsServerMemory: this.#memoryOverride ?? options.maxTsServerMemory ?? this.#memoryDefault,
       },
-    });
+    };
+    this.#toBackend({ ...msg, id: gid, params: forwarded });
+    this.#onInitialize(forwarded);
   }
 
   #settleInit(msg) {

@@ -1,7 +1,8 @@
 // daemon.mjs — one per project root. Listens on the root's endpoint, owns one
 // typescript-language-server, and puts every session that connects through the
-// Broker. Exits 10 minutes (TSD_IDLE_MS) after the last session leaves, or as
-// soon as the backend dies — the shims then exit and Claude Code restarts them.
+// Broker. Exits 5 minutes (TSD_IDLE_MS) after the last session leaves, or as
+// soon as the backend dies — each session's link then reconnects on its next
+// message and re-opens its files.
 //
 //   node daemon.mjs --launch <root> [backend args…]   start detached, return at once
 //   node daemon.mjs <root> [backend args…]            be the daemon
@@ -11,6 +12,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Broker } from "./broker.mjs";
 import { resolveBackend, spawnBackend } from "./backend.mjs";
+import { typescriptVersionAt } from "./project.mjs";
 import {
   IS_WINDOWS, createLogger, createReader, encode, endpointFor, ensureRunDir, rootKey, statusFile,
 } from "./lib.mjs";
@@ -32,12 +34,12 @@ if (!ROOT) process.exit(2);
 
 const DEFAULT_TSSERVER_MEMORY_MB = 12288;
 const positiveInt = (v) => (/^\d+$/.test(String(v ?? "")) && Number(v) > 0 ? Number(v) : undefined);
-const IDLE_MS = positiveInt(process.env.TSD_IDLE_MS) ?? 10 * 60 * 1000;
+const IDLE_MS = positiveInt(process.env.TSD_IDLE_MS) ?? 5 * 60 * 1000;
 const MEMORY_OVERRIDE = positiveInt(process.env.TSD_MAX_TSSERVER_MEMORY);
 
 ensureRunDir();
 const log = createLogger("daemon");
-const KEY = rootKey(ROOT);
+const KEY = rootKey(ROOT, process.env.TSD_DAEMON_FLAVOR || "");
 const ENDPOINT = endpointFor(KEY);
 const STATUS = statusFile(KEY);
 const startedAt = new Date().toISOString();
@@ -48,6 +50,7 @@ let backendSpec = null;
 let idleTimer = null;
 let stopping = false;
 let peakClients = 0;
+let typescript = null; // { path, version } once the first session has initialized
 
 const broker = new Broker({
   toBackend: (msg) => {
@@ -59,6 +62,11 @@ const broker = new Broker({
   memoryDefault: DEFAULT_TSSERVER_MEMORY_MB,
   onEmpty: () => { writeStatus(); scheduleIdleExit(); },
   onInitFailed: () => stop(1),
+  onInitialize: (params) => {
+    const p = params.initializationOptions?.tsserver?.path ?? null;
+    typescript = { path: p, version: typescriptVersionAt(p) };
+    writeStatus();
+  },
 });
 
 function writeStatus() {
@@ -73,6 +81,7 @@ function writeStatus() {
     clients: broker.clientCount,
     peakClients,
     openDocuments: broker.openDocumentCount,
+    typescript,
     maxTsServerMemory: MEMORY_OVERRIDE ?? DEFAULT_TSSERVER_MEMORY_MB,
     startedAt,
     updatedAt: new Date().toISOString(),

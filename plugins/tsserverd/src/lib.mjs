@@ -16,13 +16,16 @@ export function normalizeRoot(root) {
   return IS_WINDOWS ? resolved.toLowerCase() : resolved;
 }
 
-// Short stable key for a root. The user name is mixed in so two accounts on one
-// machine never share a daemon, and TSD_NAMESPACE lets tests run beside a live one.
-export function rootKey(root) {
+// Short stable key for a daemon. The user name is mixed in so two accounts on
+// one machine never share a daemon, and TSD_NAMESPACE lets tests run beside a
+// live one. `flavor` keeps a folder checked with the global TypeScript apart
+// from the same folder checked with its own (before and after `npm install`).
+export function rootKey(root, flavor = "") {
   let user = "";
   try { user = os.userInfo().username; } catch {}
   const ns = process.env.TSD_NAMESPACE || "";
-  return createHash("sha1").update(`${user}\0${ns}\0${normalizeRoot(root)}`).digest("hex").slice(0, 16);
+  const salt = flavor ? `\0${flavor}` : "";
+  return createHash("sha1").update(`${user}\0${ns}\0${normalizeRoot(root)}${salt}`).digest("hex").slice(0, 16);
 }
 
 // Per user: on Linux the temp dir is one /tmp for everybody, and a second user

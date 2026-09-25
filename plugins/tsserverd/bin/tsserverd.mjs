@@ -91,8 +91,9 @@ function status() {
     for (const p of tree) owned.add(p.pid);
     const bytes = tree.reduce((sum, p) => sum + p.bytes, 0);
     sharedBytes += bytes;
+    const ts = s.typescript?.version ? `TypeScript ${s.typescript.version}` : "TypeScript not reported yet";
     console.log(`${s.root}`);
-    console.log(`  sessions ${s.clients} now · ${s.peakClients} at peak · ${s.openDocuments} open files`);
+    console.log(`  sessions ${s.clients} now · ${s.peakClients} at peak · ${s.openDocuments} open files · ${ts}`);
     console.log(`  daemon ${s.daemonPid} · backend ${s.backendPid ?? "-"} · ${procs.length ? gb(bytes) : "memory unknown"} · cap ${s.maxTsServerMemory} MB per tsserver · since ${s.startedAt}`);
   }
 
