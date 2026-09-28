@@ -23,6 +23,24 @@
         "memory",
         "windows"
       ]
+    },
+    {
+      "name": "chrome-dev-tools-multitask",
+      "source": "./plugins/chrome-dev-tools-multitask",
+      "version": "1.0.0",
+      "description": "chrome-devtools-mcp for many sessions at once: its own Chrome window and persistent profile per browsing session (sticky per project), no browser server for sessions that never browse, and unused browsers closed after 30 minutes.",
+      "category": "development",
+      "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/chrome-dev-tools-multitask",
+      "repository": "https://github.com/xtAngmO/claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "chrome",
+        "devtools",
+        "mcp",
+        "browser",
+        "multi-session",
+        "windows"
+      ]
     }
   ]
 }

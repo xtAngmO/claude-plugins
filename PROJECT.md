@@ -24,11 +24,32 @@ plugins/typescript-lsp/            one tsserver per TypeScript project, shared b
   bin/tsserverd.mjs                the status / doctor / stop CLI
   skills/tsserverd/SKILL.md        lets Claude run the CLI when asked
   test/                            node:test; `npm test` inside plugins/typescript-lsp
+plugins/chrome-dev-tools-multitask/  chrome-devtools-mcp for many sessions (replaces chrome-devtools-mcp@claude-plugins-official)
+  .mcp.json                        MCP server "chrome-devtools" = node bin/chrome-devtools-multitask.mjs
+  bin/chrome-devtools-multitask.mjs  wiring + CDP_* settings
+  src/proxy.mjs                    answers initialize/tools/list from cache, starts the real server on
+                                   the first call, idle close (pure, unit tested against a fake server)
+  src/slots.mjs                    numbered persistent profiles, pid locks, sticky per project
+  src/server.mjs                   runs chrome-devtools-mcp from npx's cache; kills a browser left on a profile
+  src/cache.mjs, src/lines.mjs     the on-disk answer cache; JSON-lines framing
+  skills/                          chrome-devtools-mcp 1.9.0's skills, unchanged (Apache-2.0, see NOTICE)
+  test/                            node:test; the integration suite needs chrome-devtools-mcp@1.9.0 in npx's cache
 ```
 
 The two layers: **router + link** make one session look like one LSP client per project.
 **broker** makes one project's server look like it has one client. Each can be tested
 alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
+
+## Working on chrome-dev-tools-multitask
+
+- **Slot lock files are shared** with the user's standalone `~/.claude/tools/cdp-slot-chrome.mjs`, which Codex still runs: same directory (`~/.cache/chrome-devtools-mcp/slots`), same `slot-N.lock` holding just a pid. Keep them compatible, or Codex and Claude Code will open two browsers on one profile. `slot-N.json` (project, last use) is ours alone; the old wrapper ignores it.
+- **The answer cache** is keyed by chrome-devtools-mcp version + extra args + the client's protocol version. A new version or new flags means one eager start, then lazy again.
+- **Closing stdin is how to stop the real server:** it exits and closes its Chrome (verified on 1.9.0). The browser kill in `server.mjs` is only the backstop for a server that was killed first.
+- **`--no-usage-statistics` is what removes the telemetry watchdog process.** Running the entry script from npx's cache removes the npx parent. One node per browsing session, instead of the official plugin's three per session.
+- **Updating chrome-devtools-mcp:**
+  1. Bump `CDP_MCP_VERSION`'s default in `bin/`.
+  2. Re-copy `skills/` from that version.
+  3. Run `npx chrome-devtools-mcp@<v> --help` once, so the integration suite finds it in the cache.
 
 ## Working on tsserverd
 
