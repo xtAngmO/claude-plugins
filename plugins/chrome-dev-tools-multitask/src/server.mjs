@@ -55,13 +55,17 @@ function npxCli() {
   ].find((p) => p && fs.existsSync(p));
 }
 
+// With `shell: true` Node joins the arguments unquoted, so a profile path with
+// a space in it would split into two arguments.
+export const shellQuote = (args) => args.map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a));
+
 // → { command, args, shell, via }
 export function serverCommand(spec, args) {
   const entry = cachedEntry(spec);
   if (entry) return { command: process.execPath, args: [entry, ...args], shell: false, via: entry };
   const cli = npxCli();
   if (cli) return { command: process.execPath, args: [cli, "--yes", spec, ...args], shell: false, via: "npx" };
-  return { command: "npx", args: ["--yes", spec, ...args], shell: true, via: "npx (shell)" };
+  return { command: "npx", args: shellQuote(["--yes", spec, ...args]), shell: true, via: "npx (shell)" };
 }
 
 export function startServer({ spec, args, onMessageChunk, onExit, log }) {
@@ -89,20 +93,29 @@ export function startServer({ spec, args, onMessageChunk, onExit, log }) {
   };
 }
 
+// Whether a browser command line runs on exactly `profile`. A bare substring
+// would let ...\chrome-profile match chrome-profile-beta (the official plugin's
+// profile for --channel=beta) and profile-2 match profile-20.
+export function runsOnProfile(cmd, profile, caseInsensitive = IS_WINDOWS) {
+  const norm = (s) => (caseInsensitive ? s.toLowerCase() : s);
+  const needle = norm(profile).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`--user-data-dir=(?:"${needle}"|${needle})(?=\\s|"|$)`).test(norm(cmd));
+}
+
 // A browser left running on a profile would make that slot unusable. Normally
 // the server closes it on the way out; this is the backstop for a server that
-// was killed first.
+// was killed first. Bounded: a stuck process query must not stall the proxy.
 export function killBrowsersOn(profile, log = () => {}) {
   if (!profile) return 0;
-  const needle = IS_WINDOWS ? profile.toLowerCase() : profile;
   let rows = [];
   try {
     if (IS_WINDOWS) {
-      const script = "$ProgressPreference='SilentlyContinue'; Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' OR Name='chrome-headless-shell.exe'\" | ForEach-Object { \"{0}`t{1}\" -f $_.ProcessId, $_.CommandLine }";
-      rows = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] })
+      // UTF-8 out, or a profile path like C:\Users\José\... comes back as Jos? and matches nothing.
+      const script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'; Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' OR Name='chrome-headless-shell.exe'\" | ForEach-Object { \"{0}`t{1}\" -f $_.ProcessId, $_.CommandLine }";
+      rows = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 })
         .split(/\r?\n/).filter(Boolean).map((l) => { const [pid, ...cmd] = l.split("\t"); return { pid: Number(pid), cmd: cmd.join("\t") }; });
     } else {
-      rows = execFileSync("ps", ["-A", "-o", "pid=,args="], { encoding: "utf8" })
+      rows = execFileSync("ps", ["-A", "-o", "pid=,args="], { encoding: "utf8", timeout: 10_000 })
         .split("\n").map((l) => /^\s*(\d+)\s+(.*)$/.exec(l)).filter(Boolean).map((m) => ({ pid: Number(m[1]), cmd: m[2] }));
     }
   } catch {
@@ -110,8 +123,7 @@ export function killBrowsersOn(profile, log = () => {}) {
   }
   let killed = 0;
   for (const r of rows) {
-    const cmd = IS_WINDOWS ? r.cmd.toLowerCase() : r.cmd;
-    if (!cmd.includes(`--user-data-dir=${needle}`) && !cmd.includes(`--user-data-dir="${needle}"`)) continue;
+    if (!runsOnProfile(r.cmd, profile)) continue;
     try { process.kill(r.pid); killed++; } catch {}
   }
   if (killed) log(`closed ${killed} leftover browser process(es) on ${profile}`);

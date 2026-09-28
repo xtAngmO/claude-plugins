@@ -66,7 +66,7 @@ function start(cwd, env = {}) {
     cwd,
     // Idle long enough that checking for a browser (a slow process query on
     // Windows) never races the idle close.
-    env: { ...process.env, CDP_HOME: HOME, CDP_EXTRA_ARGS: "--headless", CDP_IDLE_MINUTES: "0.15", CDP_TICK_MS: "300", ...env },
+    env: { ...process.env, CDP_HOME: HOME, CDP_EXTRA_ARGS: "", CDP_IDLE_MINUTES: "0.15", CDP_TICK_MS: "300", ...env },
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -106,7 +106,9 @@ function start(cwd, env = {}) {
 }
 
 test("the first session learns the tools from the real server; later ones never start it to ask", { skip, timeout: 180000 }, async () => {
-  const first = start(project("learn"));
+  // An extra flag skips the bundled snapshot, so this session has to learn.
+  const learnEnv = { CDP_EXTRA_ARGS: "--no-performance-crux" };
+  const first = start(project("learn"), learnEnv);
   const init = await first.open();
   assert.equal(init.result.serverInfo.name, "chrome_devtools");
   const tools = await first.request("tools/list", {});
@@ -114,14 +116,33 @@ test("the first session learns the tools from the real server; later ones never 
   assert.match(first.stderr, /starting chrome-devtools-mcp@1\.9\.0 via .*chrome-devtools-mcp\.js/, "run straight from npx's cache, no npx process");
   await first.end();
 
-  const later = start(project("learn"));
+  const later = start(project("learn"), learnEnv);
   const t0 = Date.now();
   await later.open();
   const again = await later.request("tools/list", {});
   assert.deepEqual(again.result, tools.result);
+  assert.ok(again.result.tools.some((x) => x.name === "set_browser_visible"), "with the visibility tool");
   assert.ok(Date.now() - t0 < 2000);
   assert.doesNotMatch(later.stderr, /starting/, "no server started");
   await later.end();
+});
+
+test("a machine's very first session is answered from the bundled snapshot, no server started", { timeout: 60000 }, async () => {
+  const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "cdp-it-fresh-"));
+  try {
+    // Default flags (no CDP_EXTRA_ARGS) and nothing learned yet in this home.
+    const s = start(project("fresh"), { CDP_HOME: fresh, CDP_EXTRA_ARGS: "" });
+    const t0 = Date.now();
+    const init = await s.open();
+    const tools = await s.request("tools/list", {});
+    assert.equal(init.result.serverInfo.version, "1.9.0");
+    assert.equal(tools.result.tools.length, 30, "chrome-devtools-mcp's 29 plus set_browser_visible");
+    assert.ok(Date.now() - t0 < 2000);
+    assert.doesNotMatch(s.stderr, /starting/, "no server, no download");
+    await s.end();
+  } finally {
+    fs.rmSync(fresh, { recursive: true, force: true });
+  }
 });
 
 test("two sessions browsing at once get two browsers on two profiles", { skip, timeout: 180000 }, async () => {

@@ -32,6 +32,7 @@ plugins/chrome-dev-tools-multitask/  chrome-devtools-mcp for many sessions (repl
   src/slots.mjs                    numbered persistent profiles, pid locks, sticky per project
   src/server.mjs                   runs chrome-devtools-mcp from npx's cache; kills a browser left on a profile
   src/cache.mjs, src/lines.mjs     the on-disk answer cache; JSON-lines framing
+  data/answers-<spec>.json         bundled initialize/tools answers (scripts/snapshot.mjs), default flags only
   skills/                          chrome-devtools-mcp 1.9.0's skills, unchanged (Apache-2.0, see NOTICE)
   test/                            node:test; the integration suite needs chrome-devtools-mcp@1.9.0 in npx's cache
 ```
@@ -46,10 +47,16 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 - **The answer cache** is keyed by chrome-devtools-mcp version + extra args + the client's protocol version. A new version or new flags means one eager start, then lazy again.
 - **Closing stdin is how to stop the real server:** it exits and closes its Chrome (verified on 1.9.0). The browser kill in `server.mjs` is only the backstop for a server that was killed first.
 - **`--no-usage-statistics` is what removes the telemetry watchdog process.** Running the entry script from npx's cache removes the npx parent. One node per browsing session, instead of the official plugin's three per session.
+- **Hidden/visible belongs to the proxy.** `splitHeadless` strips every `--headless` / `--no-headless` from the pass-through flags and only uses it as the starting mode. Left in, it would pin the mode, and `set_browser_visible(true)` would restart a browser that is still hidden.
+- **Stops chain, and a start waits for all of them.** A stop's clean-up closes any browser on its profile and frees the slot. The slot lock holds our own pid, so a new claim can land on that same slot. A start that ran before an older clean-up finished would have its new browser killed and its slot freed under it. A second stop (the visibility switch, say) must therefore await the first.
+- **A cancelled request is never answered by the server.** If it stayed in `#pending`, the idle close would never fire. One still in the queue is dropped, not sent.
+- **The leftover-browser kill runs a PowerShell process query (about 1 s).** So it only runs when `slots.busy(profile)` says a browser still holds the profile. On macOS and Linux that is `SingletonLock` naming a live pid; never delete a live one.
 - **Updating chrome-devtools-mcp:**
   1. Bump `CDP_MCP_VERSION`'s default in `bin/`.
   2. Re-copy `skills/` from that version.
   3. Run `npx chrome-devtools-mcp@<v> --help` once, so the integration suite finds it in the cache.
+  4. Record its answers with `node scripts/snapshot.mjs chrome-devtools-mcp@<v>`. That writes `data/answers-<spec>.json`, which lets a first session start no server.
+  5. Add the protocol version Claude Code uses if it changed: it was `2025-11-25` on 2.1.283.
 
 ## Working on tsserverd
 

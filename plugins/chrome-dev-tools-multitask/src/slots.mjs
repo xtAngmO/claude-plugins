@@ -14,24 +14,40 @@
 // back when that slot is free, so a site it signed in to stays signed in, and a
 // new project takes an unclaimed slot before it borrows another project's.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 function defaultPidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
 }
 
-// A running Chrome keeps an exclusive handle on the profile's lockfile, so
-// failing to open it means some other browser owns this profile right now.
-function defaultProfileBusy(profile) {
-  const lock = path.join(profile, "lockfile");
-  if (!fs.existsSync(lock)) return false;
-  try {
-    fs.closeSync(fs.openSync(lock, "r+"));
-    return false;
-  } catch (e) {
-    return e.code === "EBUSY" || e.code === "EPERM" || e.code === "EACCES";
+// Whether a browser is running on `profile` right now.
+//   Windows: Chrome holds an exclusive handle on the profile's `lockfile`.
+//   macOS/Linux: there is no lockfile; `SingletonLock` is a symlink to
+//   "<hostname>-<pid>" of the browser holding the profile.
+export function profileBusyOn(platform, profile, { pidAlive = defaultPidAlive, readlink = fs.readlinkSync, hostname = os.hostname() } = {}) {
+  if (platform === "win32") {
+    const lock = path.join(profile, "lockfile");
+    if (!fs.existsSync(lock)) return false;
+    try {
+      fs.closeSync(fs.openSync(lock, "r+"));
+      return false;
+    } catch (e) {
+      return e.code === "EBUSY" || e.code === "EPERM" || e.code === "EACCES";
+    }
   }
+  let target;
+  try { target = readlink(path.join(profile, "SingletonLock")); } catch { return false; }
+  const at = String(target).lastIndexOf("-");
+  if (at < 0) return false;
+  const host = target.slice(0, at);
+  const pid = Number(target.slice(at + 1));
+  // Another machine's lock on a shared home cannot be checked; treat it as held.
+  if (host !== hostname) return true;
+  return Number.isInteger(pid) && pid > 0 && pidAlive(pid);
 }
+
+const defaultProfileBusy = (profile) => profileBusyOn(process.platform, profile);
 
 // A browser that crashed leaves these behind, and they block the next launch.
 function clearStaleLocks(profile) {
@@ -71,13 +87,41 @@ export function createSlots({
         const holder = Number(fs.readFileSync(lockOf(n), "utf8").trim());
         if (holder === pid) return true;
         if (holder && pidAlive(holder)) return false;
-        // Its holder was killed without cleaning up.
-        fs.rmSync(lockOf(n), { force: true });
-        fs.writeFileSync(lockOf(n), String(pid), { flag: "wx" });
-        return true;
+        return takeOver(n, holder);
       } catch {
         return false;
       }
+    }
+  }
+
+  // The holder was killed without cleaning up (routine: Claude Code kills an
+  // MCP server's process tree at session end). Two sessions can find the same
+  // dead lock at once; without this token both would delete-and-recreate and
+  // both believe they hold the slot. One token per dead holder, so only one
+  // taker proceeds; a token its own taker left behind by dying goes stale.
+  function takeOver(n, deadHolder) {
+    const token = `${lockOf(n)}.takeover-${deadHolder}`;
+    try {
+      fs.writeFileSync(token, String(pid), { flag: "wx" });
+    } catch (e) {
+      if (e.code !== "EEXIST") return false;
+      try {
+        if (now() - fs.statSync(token).mtimeMs < 10_000) return false;
+        fs.rmSync(token, { force: true });
+        fs.writeFileSync(token, String(pid), { flag: "wx" });
+      } catch {
+        return false;
+      }
+    }
+    try {
+      if (Number(fs.readFileSync(lockOf(n), "utf8").trim()) !== deadHolder) return false; // someone was quicker
+      fs.rmSync(lockOf(n), { force: true });
+      fs.writeFileSync(lockOf(n), String(pid), { flag: "wx" });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      fs.rmSync(token, { force: true });
     }
   }
 
@@ -99,6 +143,7 @@ export function createSlots({
 
   return {
     profileOf,
+    busy: (profile) => profileBusy(profile),
 
     // → { slot, profile } or null when every slot is taken.
     claim() {

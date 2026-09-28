@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HANDSHAKE_ID, Proxy } from "../src/proxy.mjs";
+import { HANDSHAKE_ID, Proxy, VISIBILITY_TOOL, splitHeadless } from "../src/proxy.mjs";
 
 const INIT = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } };
 const INIT_RESULT = { protocolVersion: "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "chrome_devtools", version: "1.9.0" } };
 const TOOLS = { tools: [{ name: "list_pages", inputSchema: { type: "object" } }] };
+const SHOWN_TOOLS = { tools: [...TOOLS.tools, VISIBILITY_TOOL] };
+const HIDDEN = ["--headless", "--viewport=1280x800"];
 
-function setup({ cached = true, idleMs = 1000, slotsFull = false } = {}) {
+function setup({ cached = true, idleMs = 1000, slotsFull = false, headless = true, busy, extraArgs = ["--no-usage-statistics"], startTimeoutMs } = {}) {
   const out = [];
   const servers = [];
   const store = {};
@@ -23,13 +25,16 @@ function setup({ cached = true, idleMs = 1000, slotsFull = false } = {}) {
     slots: {
       claim: () => { if (slotsFull) return null; const c = { slot: events.claimed.length + 1, profile: `/profiles/${events.claimed.length + 1}` }; events.claimed.push(c); return c; },
       release: (n) => events.released.push(n),
+      ...(busy ? { busy } : {}),
     },
     cache: { get: (k, key) => store[k]?.[key] ?? null, set: (k, key, v) => { store[k] = { ...(store[k] ?? {}), [key]: v }; } },
     killBrowsers: (profile) => events.killed.push(profile),
     idleMs,
-    extraArgs: ["--no-usage-statistics"],
+    extraArgs,
     cacheScope: "s",
     now: () => clock,
+    headless,
+    ...(startTimeoutMs ? { startTimeoutMs } : {}),
   });
   const client = (m) => proxy.fromClient({ jsonrpc: "2.0", ...m });
   const handshake = (s) => s.answer({ jsonrpc: "2.0", id: HANDSHAKE_ID, result: INIT_RESULT });
@@ -45,7 +50,7 @@ test("a session that never browses never starts a server", () => {
   t.client({ id: 3, method: "logging/setLevel", params: { level: "info" } });
   assert.deepEqual(t.out, [
     { jsonrpc: "2.0", id: 0, result: INIT_RESULT },
-    { jsonrpc: "2.0", id: 1, result: TOOLS },
+    { jsonrpc: "2.0", id: 1, result: SHOWN_TOOLS },
     { jsonrpc: "2.0", id: 2, result: {} },
     { jsonrpc: "2.0", id: 3, result: {} },
   ]);
@@ -60,7 +65,7 @@ test("the first call starts the server on a slot, replays the handshake, then ru
   t.client({ id: 3, method: "logging/setLevel", params: { level: "info" } });
   t.client({ id: 5, method: "tools/call", params: { name: "list_pages", arguments: {} } });
   const [s] = t.servers;
-  assert.deepEqual(s.args, ["--user-data-dir=/profiles/1", "--no-usage-statistics"]);
+  assert.deepEqual(s.args, ["--user-data-dir=/profiles/1", ...HIDDEN, "--no-usage-statistics"]);
   assert.deepEqual(s.received, [{ jsonrpc: "2.0", id: HANDSHAKE_ID, method: "initialize", params: INIT }]);
   t.handshake(s);
   assert.deepEqual(s.received.slice(1).map((m) => m.method), ["notifications/initialized", "logging/setLevel", "tools/call"]);
@@ -79,8 +84,9 @@ test("first run: the real server answers initialize and tools/list, and both are
   t.client({ method: "notifications/initialized" });
   t.client({ id: 1, method: "tools/list", params: {} });
   s.answer({ jsonrpc: "2.0", id: 1, result: TOOLS });
+  assert.deepEqual(t.out.at(-1), { jsonrpc: "2.0", id: 1, result: SHOWN_TOOLS }, "the session sees the visibility tool too");
   assert.deepEqual(t.store.init["s|2025-06-18"], INIT_RESULT);
-  assert.deepEqual(t.store.tools["s|2025-06-18"], TOOLS);
+  assert.deepEqual(t.store.tools["s|2025-06-18"], TOOLS, "only the server's own list is remembered");
   assert.equal(s.received.filter((m) => m.method === "notifications/initialized").length, 1);
 });
 
@@ -105,6 +111,72 @@ test("an unused browser is closed after the idle time, and comes back on the nex
   t.client({ id: 2, method: "tools/call", params: { name: "list_pages" } });
   assert.equal(t.servers.length, 2, "a new server");
   assert.equal(t.servers[1].received[0].id, HANDSHAKE_ID);
+});
+
+test("a call arriving while the idle close is still running waits for it, then starts clean", async () => {
+  const t = setup({ idleMs: 1000 });
+  const order = [];
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  const first = t.servers[0];
+  t.handshake(first);
+  first.answer({ jsonrpc: "2.0", id: 1, result: {} });
+  let finishStop;
+  first.stop = () => new Promise((resolve) => { finishStop = () => { order.push("old server gone"); resolve(); }; });
+
+  t.advance(2000);
+  const closing = t.proxy.tick();
+  t.client({ id: 2, method: "tools/call", params: { name: "list_pages" } });
+  assert.equal(t.servers.length, 1, "no new server while the old one is still closing");
+  finishStop();
+  await closing;
+  await new Promise((r) => setImmediate(r));
+  assert.equal(t.servers.length, 2, "started once the old one was cleaned up");
+  assert.deepEqual(t.events.killed, ["/profiles/1"], "the backstop ran for the old profile only");
+  assert.deepEqual(t.events.released, [1], "the old slot was freed before the new claim");
+  assert.equal(t.events.claimed.length, 2);
+  t.handshake(t.servers[1]);
+  assert.equal(t.servers[1].received.at(-1).id, 2, "the waiting call went to the new server");
+});
+
+test("browsers run hidden by default; set_browser_visible restarts a running one in a window", async () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  const first = t.servers[0];
+  assert.deepEqual(first.args.slice(1, 3), HIDDEN);
+  t.handshake(first);
+  first.answer({ jsonrpc: "2.0", id: 1, result: {} });
+
+  t.client({ id: 2, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: true } } });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(first.stopped, true, "the hidden browser was closed");
+  assert.equal(first.received.some((m) => m.params?.name === "set_browser_visible"), false, "answered here, never sent to chrome-devtools-mcp");
+  assert.match(t.out.at(-1).result.content[0].text, /normal window.*restarted on the same profile/s);
+  assert.deepEqual(t.events.released, [1]);
+
+  t.client({ id: 3, method: "tools/call", params: { name: "list_pages" } });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(t.servers[1].args.includes("--headless"), false, "the next browser has a window");
+});
+
+test("set_browser_visible with no browser running just sets the mode; asking twice is a no-op", () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: false } } });
+  assert.match(t.out.at(-1).result.content[0].text, /already runs hidden/);
+  t.client({ id: 2, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: true } } });
+  assert.match(t.out.at(-1).result.content[0].text, /from the next browser action/);
+  assert.equal(t.servers.length, 0, "nothing started just to change the mode");
+  t.client({ id: 3, method: "tools/call", params: { name: "list_pages" } });
+  assert.equal(t.servers[0].args.includes("--headless"), false);
+});
+
+test("CDP_HEADLESS=0 starts visible, and an explicit --viewport is left alone", () => {
+  const visible = setup({ headless: false });
+  visible.client({ id: 0, method: "initialize", params: INIT });
+  visible.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  assert.equal(visible.servers[0].args.includes("--headless"), false);
 });
 
 test("a call still running keeps the browser open", async () => {
@@ -162,7 +234,7 @@ test("with every slot taken the browser gets a throwaway profile", () => {
   const t = setup({ slotsFull: true });
   t.client({ id: 0, method: "initialize", params: INIT });
   t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
-  assert.deepEqual(t.servers[0].args, ["--isolated=true", "--no-usage-statistics"]);
+  assert.deepEqual(t.servers[0].args, ["--isolated=true", ...HIDDEN, "--no-usage-statistics"]);
 });
 
 test("notifications for a server that is not running go nowhere", () => {
@@ -181,4 +253,131 @@ test("closing the session stops the server and gives the slot back", async () =>
   await t.proxy.close();
   assert.equal(t.servers[0].stopped, true);
   assert.deepEqual(t.events.released, [1]);
+});
+
+const tickOver = () => new Promise((r) => setImmediate(r));
+
+test("a cancelled call that is still queued is never sent and never answered", () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "click" } });
+  t.client({ method: "notifications/cancelled", params: { requestId: 1 } });
+  t.client({ id: 2, method: "tools/call", params: { name: "list_pages" } });
+  t.handshake(t.servers[0]);
+  const sent = t.servers[0].received.filter((m) => m.method === "tools/call").map((m) => m.id);
+  assert.deepEqual(sent, [2], "the click the user cancelled never happens");
+  assert.equal(t.servers[0].received.some((m) => m.method === "notifications/cancelled"), false, "nothing to tell the server");
+  assert.equal(t.out.some((m) => m.id === 1), false, "a cancelled request gets no answer");
+});
+
+test("a cancelled call in flight is forwarded and stops counting, so the browser can go idle", async () => {
+  const t = setup({ idleMs: 1000 });
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "performance_start_trace" } });
+  t.handshake(t.servers[0]);
+  t.client({ method: "notifications/cancelled", params: { requestId: 1, reason: "user" } });
+  assert.deepEqual(t.servers[0].received.at(-1).params, { requestId: 1, reason: "user" });
+  t.advance(5000);
+  await t.proxy.tick();
+  assert.equal(t.servers[0].stopped, true, "the server never answers a cancelled call; waiting for it would keep Chrome open for ever");
+});
+
+test("ping and logging/setLevel are answered at once while a server is starting", () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  t.client({ id: 2, method: "ping" });
+  t.client({ id: 3, method: "logging/setLevel", params: { level: "debug" } });
+  assert.deepEqual(t.out.slice(-2), [{ jsonrpc: "2.0", id: 2, result: {} }, { jsonrpc: "2.0", id: 3, result: {} }]);
+  t.handshake(t.servers[0]);
+  const received = t.servers[0].received;
+  assert.equal(received.some((m) => m.method === "ping"), false);
+  assert.deepEqual(received.find((m) => m.method === "logging/setLevel").params, { level: "debug" }, "the level is replayed once the server is up");
+});
+
+test("a server that never answers initialize is given up on, and the next call tries again", async () => {
+  const t = setup({ startTimeoutMs: 20 });
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(t.servers[0].stopped, true);
+  assert.equal(t.out.at(-1).id, 1);
+  assert.match(t.out.at(-1).error.message, /did not start in time/);
+  assert.deepEqual(t.events.released, [1]);
+  t.client({ id: 2, method: "tools/call", params: { name: "list_pages" } });
+  await tickOver();
+  assert.equal(t.servers.length, 2);
+  t.handshake(t.servers[1]);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(t.servers[1].stopped, false, "a server that did answer is not timed out");
+});
+
+test("the leftover-browser kill runs only when a browser still holds the profile", async () => {
+  const t = setup({ idleMs: 1000, busy: () => false });
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  t.handshake(t.servers[0]);
+  t.servers[0].answer({ jsonrpc: "2.0", id: 1, result: {} });
+  t.advance(2000);
+  await t.proxy.tick();
+  assert.deepEqual(t.events.killed, [], "a clean exit leaves nothing to look for");
+  assert.deepEqual(t.events.released, [1]);
+});
+
+test("a second stop waits for the first, so no browser starts while the old one is closing", async () => {
+  const t = setup({ idleMs: 1000 });
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  const first = t.servers[0];
+  t.handshake(first);
+  first.answer({ jsonrpc: "2.0", id: 1, result: {} });
+  let finishStop;
+  first.stop = () => new Promise((resolve) => { finishStop = resolve; });
+
+  t.advance(2000);
+  const closing = t.proxy.tick();
+  t.client({ id: 2, method: "tools/call", params: { name: "list_pages" } }); // waits for the close
+  t.client({ id: 3, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: true } } }); // a second stop
+  await tickOver();
+  t.client({ id: 4, method: "tools/call", params: { name: "list_pages" } });
+  await tickOver();
+  assert.equal(t.servers.length, 1, "nothing started while the first server is still closing");
+
+  finishStop();
+  await closing;
+  await tickOver();
+  await tickOver();
+  assert.equal(t.servers.length, 2, "exactly one new server");
+  assert.deepEqual(t.events.released, [1], "the old slot was freed before the new claim");
+  assert.deepEqual(t.events.killed, ["/profiles/1"]);
+  assert.equal(t.servers[1].args.includes("--headless"), false, "the new browser has the window asked for");
+  t.handshake(t.servers[1]);
+  const calls = t.servers[1].received.filter((m) => m.method === "tools/call").map((m) => m.id);
+  assert.deepEqual(calls, [2, 4], "calls queued behind the switch carried over instead of failing");
+  assert.equal(t.out.filter((m) => m.error).length, 0);
+});
+
+test("a --headless among the extra flags sets the starting mode without pinning it", async () => {
+  const t = setup({ headless: false, extraArgs: ["--headless", "--viewport=1920x1080", "--slim"] });
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  assert.deepEqual(t.servers[0].args, ["--user-data-dir=/profiles/1", "--headless", "--viewport=1920x1080", "--slim"],
+    "one --headless, and the viewport asked for rather than ours");
+  t.handshake(t.servers[0]);
+  t.client({ id: 2, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: true } } });
+  await tickOver();
+  t.client({ id: 3, method: "tools/call", params: { name: "list_pages" } });
+  await tickOver();
+  assert.deepEqual(t.servers[1].args, ["--user-data-dir=/profiles/2", "--viewport=1920x1080", "--slim"]);
+});
+
+test("splitHeadless reads every spelling of the flag and keeps the rest in order", () => {
+  assert.deepEqual(splitHeadless(["--slim", "--headless", "--x"], false), { headless: true, rest: ["--slim", "--x"] });
+  assert.deepEqual(splitHeadless(["--headless=true"], false), { headless: true, rest: [] });
+  assert.deepEqual(splitHeadless(["--headless=false"], true), { headless: false, rest: [] });
+  assert.deepEqual(splitHeadless(["--headless=0"], true), { headless: false, rest: [] });
+  assert.deepEqual(splitHeadless(["--no-headless"], true), { headless: false, rest: [] });
+  assert.deepEqual(splitHeadless(["--headless", "--no-headless"], true), { headless: false, rest: [] }, "the last one wins");
+  assert.deepEqual(splitHeadless(["--headlessness"], true), { headless: true, rest: ["--headlessness"] }, "not a prefix match");
+  assert.deepEqual(splitHeadless([], true), { headless: true, rest: [] });
 });

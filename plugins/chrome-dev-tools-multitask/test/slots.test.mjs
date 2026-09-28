@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSlots } from "../src/slots.mjs";
+import { createSlots, profileBusyOn } from "../src/slots.mjs";
 
 function home() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "cdp-slots-"));
@@ -118,5 +118,53 @@ test("the lock files are the standalone cdp-slot-chrome.mjs wrapper's: a pid, no
   try {
     session(h, 12345, "/p").claim();
     assert.equal(fs.readFileSync(path.join(h, "slots", "slot-1.lock"), "utf8"), "12345");
+  } finally { fs.rmSync(h, { recursive: true, force: true }); }
+});
+
+test("macOS/Linux: a profile is busy while the browser its SingletonLock names is alive", () => {
+  const busy = (target, { alive = true, hostname = "box" } = {}) =>
+    profileBusyOn("linux", "/p", { readlink: () => target, pidAlive: () => alive, hostname });
+  assert.equal(busy("box-4242"), true);
+  assert.equal(busy("box-4242", { alive: false }), false, "a crashed browser's lock is stale");
+  assert.equal(busy("my-host-4242", { hostname: "my-host" }), true, "a hostname with dashes splits at the last one");
+  assert.equal(busy("other-4242"), true, "another machine's lock on a shared home cannot be checked: held");
+  assert.equal(busy("garbage"), false);
+  assert.equal(profileBusyOn("linux", "/p", { readlink: () => { throw Object.assign(new Error("no"), { code: "ENOENT" }); } }), false, "no lock, no browser");
+});
+
+test("Windows: a profile whose lockfile is missing or openable is free", () => {
+  const h = home();
+  try {
+    assert.equal(profileBusyOn("win32", h), false);
+    fs.writeFileSync(path.join(h, "lockfile"), "");
+    assert.equal(profileBusyOn("win32", h), false, "left behind by a browser that is gone");
+  } finally { fs.rmSync(h, { recursive: true, force: true }); }
+});
+
+test("two sessions finding the same dead lock: only one takes it over", () => {
+  const h = home();
+  try {
+    const slots = path.join(h, "slots");
+    fs.mkdirSync(slots, { recursive: true });
+    fs.writeFileSync(path.join(slots, "slot-1.lock"), "9999"); // dead
+    // Another session is mid-takeover of that same dead lock right now.
+    fs.writeFileSync(path.join(slots, "slot-1.lock.takeover-9999"), "300");
+    const got = session(h, 100, null, { now: () => Date.now() }).claim();
+    assert.equal(got.slot, 2, "backs off rather than both believing they hold slot 1");
+    assert.equal(fs.readFileSync(path.join(slots, "slot-1.lock"), "utf8"), "9999", "left for the other taker");
+  } finally { fs.rmSync(h, { recursive: true, force: true }); }
+});
+
+test("a takeover token whose taker died is stale after 10 s and does not block the slot", () => {
+  const h = home();
+  try {
+    const slots = path.join(h, "slots");
+    fs.mkdirSync(slots, { recursive: true });
+    fs.writeFileSync(path.join(slots, "slot-1.lock"), "9999");
+    fs.writeFileSync(path.join(slots, "slot-1.lock.takeover-9999"), "300");
+    const got = session(h, 100, null, { now: () => Date.now() + 60_000 }).claim();
+    assert.equal(got.slot, 1);
+    assert.equal(fs.readFileSync(path.join(slots, "slot-1.lock"), "utf8"), "100");
+    assert.equal(fs.existsSync(path.join(slots, "slot-1.lock.takeover-9999")), false, "the token is cleaned up");
   } finally { fs.rmSync(h, { recursive: true, force: true }); }
 });

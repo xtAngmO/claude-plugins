@@ -1,10 +1,20 @@
 {
   "name": "chrome-dev-tools-multitask",
-  "version": "1.0.0",
-  "description": "chrome-devtools-mcp for many Claude Code sessions at once: each session that browses gets its own Chrome window on its own persistent profile (sticky per project), sessions that never browse run no browser server, and an unused browser is closed after 30 minutes.",
-  "author": { "name": "xtAngmO", "url": "https://github.com/xtAngmO" },
+  "version": "1.1.0",
+  "description": "chrome-devtools-mcp for many Claude Code sessions at once: each session that browses gets its own hidden (headless) Chrome on its own persistent profile, sticky per project, and can show it in a window when a person needs to sign in or watch. Sessions that never browse run no browser server, and an unused browser is closed after 30 minutes.",
+  "author": {
+    "name": "xtAngmO",
+    "url": "https://github.com/xtAngmO"
+  },
   "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/chrome-dev-tools-multitask",
   "repository": "https://github.com/xtAngmO/claude-plugins",
   "license": "MIT",
-  "keywords": ["chrome", "devtools", "mcp", "browser", "multi-session", "windows"]
+  "keywords": [
+    "chrome",
+    "devtools",
+    "mcp",
+    "browser",
+    "multi-session",
+    "windows"
+  ]
 }
