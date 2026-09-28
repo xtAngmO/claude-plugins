@@ -2,7 +2,7 @@
 
 A multi-session replacement for the official `chrome-devtools-mcp` plugin for Claude Code. Every session that opens a browser gets **its own Chrome on its own persistent profile**, running **hidden in the background** unless someone needs to see it. Sessions that never browse run **no browser server at all**. A browser nobody is using is closed after 30 minutes.
 
-It uses the same `chrome-devtools-mcp` (1.9.0), exposes the same 29 tools plus one of its own (`set_browser_visible`), and bundles the same skills.
+It uses the same `chrome-devtools-mcp` (1.10.1), exposes the same 30 tools plus one of its own (`set_browser_visible`), and bundles the same skills.
 
 ## Why
 
@@ -48,7 +48,7 @@ Set these in the environment Claude Code runs in.
 | --- | --- | --- |
 | `CDP_IDLE_MINUTES` | `30` | Close a browser nobody has used for this long. `0` = never. |
 | `CDP_MAX_SLOTS` | `8` | Persistent profiles. Beyond this many browsers at once, a throwaway profile. |
-| `CDP_MCP_VERSION` | `chrome-devtools-mcp@1.9.0` | The chrome-devtools-mcp to run. |
+| `CDP_MCP_VERSION` | `chrome-devtools-mcp@1.10.1` | The chrome-devtools-mcp to run. |
 | `CDP_EXTRA_ARGS` | — | More chrome-devtools-mcp flags, e.g. `--slim` or `--viewport=1920x1080`. |
 | `CDP_HEADLESS` | on | `0` = open browsers in a visible window, like the official plugin. A session can still switch with `set_browser_visible`. A `--headless` or `--no-headless` in `CDP_EXTRA_ARGS` does the same: it sets how browsers start, and the tool can still switch them. |
 | `CDP_LAZY` | on | `0` = start the server with the session, like the official plugin. |
@@ -73,5 +73,5 @@ This covers:
 ## Credits and licences
 
 - The plugin's own code is MIT; see `LICENSE`.
-- The skills in `skills/` are copied unchanged from [ChromeDevTools/chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) 1.9.0. They are licensed Apache-2.0; see `skills/LICENSE-chrome-devtools-mcp` and `NOTICE`.
+- The skills in `skills/` are copied unchanged from [ChromeDevTools/chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) 1.10.1. They are licensed Apache-2.0; see `skills/LICENSE-chrome-devtools-mcp` and `NOTICE`.
 - The slot design started as the author's standalone `cdp-slot-chrome.mjs` wrapper.

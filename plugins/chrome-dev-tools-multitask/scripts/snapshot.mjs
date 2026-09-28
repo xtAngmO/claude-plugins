@@ -6,7 +6,7 @@
 // because the first start may have to download the package, and Claude Code
 // gives an MCP server 30 seconds to connect.
 //
-//   node scripts/snapshot.mjs [chrome-devtools-mcp@1.9.0] [protocolVersion…]
+//   node scripts/snapshot.mjs [chrome-devtools-mcp@1.10.1] [protocolVersion…]
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { frame, lineReader } from "../src/lines.mjs";
 import { serverCommand } from "../src/server.mjs";
 
-const [spec = "chrome-devtools-mcp@1.9.0", ...versions] = process.argv.slice(2);
+const [spec = "chrome-devtools-mcp@1.10.1", ...versions] = process.argv.slice(2);
 const protocols = versions.length ? versions : ["2025-11-25", "2025-06-18"];
 const out = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data", `answers-${spec}.json`);
 

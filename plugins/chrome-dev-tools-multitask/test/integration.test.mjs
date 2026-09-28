@@ -1,6 +1,6 @@
 // End to end with the real chrome-devtools-mcp and a real (headless) Chrome, in
 // a throwaway CDP_HOME so your own profiles and slots are never touched.
-// Skipped when chrome-devtools-mcp@1.9.0 is not in npx's cache yet.
+// Skipped when chrome-devtools-mcp@1.10.1 is not in npx's cache yet.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
@@ -13,7 +13,7 @@ import { cachedEntry, killBrowsersOn } from "../src/server.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, "..", "bin", "chrome-devtools-multitask.mjs");
-const SPEC = "chrome-devtools-mcp@1.9.0";
+const SPEC = "chrome-devtools-mcp@1.10.1";
 const skip = cachedEntry(SPEC) ? false : `${SPEC} is not in npx's cache (run it once with npx)`;
 
 let HOME;
@@ -113,7 +113,8 @@ test("the first session learns the tools from the real server; later ones never 
   assert.equal(init.result.serverInfo.name, "chrome_devtools");
   const tools = await first.request("tools/list", {});
   assert.ok(tools.result.tools.length >= 20);
-  assert.match(first.stderr, /starting chrome-devtools-mcp@1\.9\.0 via .*chrome-devtools-mcp\.js/, "run straight from npx's cache, no npx process");
+  const literal = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.match(first.stderr, new RegExp(`starting ${literal(SPEC)} via .*${literal("chrome-devtools-mcp.js")}`), "run straight from npx's cache, no npx process");
   await first.end();
 
   const later = start(project("learn"), learnEnv);
@@ -135,8 +136,8 @@ test("a machine's very first session is answered from the bundled snapshot, no s
     const t0 = Date.now();
     const init = await s.open();
     const tools = await s.request("tools/list", {});
-    assert.equal(init.result.serverInfo.version, "1.9.0");
-    assert.equal(tools.result.tools.length, 30, "chrome-devtools-mcp's 29 plus set_browser_visible");
+    assert.equal(init.result.serverInfo.version, SPEC.split("@").pop());
+    assert.equal(tools.result.tools.length, 31, "chrome-devtools-mcp's 30 plus set_browser_visible");
     assert.ok(Date.now() - t0 < 2000);
     assert.doesNotMatch(s.stderr, /starting/, "no server, no download");
     await s.end();

@@ -1,7 +1,7 @@
 chrome-dev-tools-multitask
 Copyright (c) 2026 xtAngmO — MIT License (see LICENSE)
 
-This plugin bundles the agent skills in skills/ from chrome-devtools-mcp 1.9.0,
+This plugin bundles the agent skills in skills/ from chrome-devtools-mcp 1.10.1,
 copied without modification:
 
   chrome-devtools-mcp

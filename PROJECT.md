@@ -33,8 +33,8 @@ plugins/chrome-dev-tools-multitask/  chrome-devtools-mcp for many sessions (repl
   src/server.mjs                   runs chrome-devtools-mcp from npx's cache; kills a browser left on a profile
   src/cache.mjs, src/lines.mjs     the on-disk answer cache; JSON-lines framing
   data/answers-<spec>.json         bundled initialize/tools answers (scripts/snapshot.mjs), default flags only
-  skills/                          chrome-devtools-mcp 1.9.0's skills, unchanged (Apache-2.0, see NOTICE)
-  test/                            node:test; the integration suite needs chrome-devtools-mcp@1.9.0 in npx's cache
+  skills/                          chrome-devtools-mcp 1.10.1's skills, unchanged (Apache-2.0, see NOTICE)
+  test/                            node:test; the integration suite needs chrome-devtools-mcp@1.10.1 in npx's cache
 ```
 
 The two layers: **router + link** make one session look like one LSP client per project.
@@ -45,7 +45,7 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 
 - **Slot lock files are shared** with the user's standalone `~/.claude/tools/cdp-slot-chrome.mjs`, which Codex still runs: same directory (`~/.cache/chrome-devtools-mcp/slots`), same `slot-N.lock` holding just a pid. Keep them compatible, or Codex and Claude Code will open two browsers on one profile. `slot-N.json` (project, last use) is ours alone; the old wrapper ignores it.
 - **The answer cache** is keyed by chrome-devtools-mcp version + extra args + the client's protocol version. A new version or new flags means one eager start, then lazy again.
-- **Closing stdin is how to stop the real server:** it exits and closes its Chrome (verified on 1.9.0). The browser kill in `server.mjs` is only the backstop for a server that was killed first.
+- **Closing stdin is how to stop the real server:** it exits and closes its Chrome (verified on 1.9.0 and 1.10.1). The browser kill in `server.mjs` is only the backstop for a server that was killed first.
 - **`--no-usage-statistics` is what removes the telemetry watchdog process.** Running the entry script from npx's cache removes the npx parent. One node per browsing session, instead of the official plugin's three per session.
 - **Hidden/visible belongs to the proxy.** `splitHeadless` strips every `--headless` / `--no-headless` from the pass-through flags and only uses it as the starting mode. Left in, it would pin the mode, and `set_browser_visible(true)` would restart a browser that is still hidden.
 - **Stops chain, and a start waits for all of them.** A stop's clean-up closes any browser on its profile and frees the slot. The slot lock holds our own pid, so a new claim can land on that same slot. A start that ran before an older clean-up finished would have its new browser killed and its slot freed under it. A second stop (the visibility switch, say) must therefore await the first.

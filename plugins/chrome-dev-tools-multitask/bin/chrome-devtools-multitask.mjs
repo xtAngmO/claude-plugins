@@ -9,7 +9,7 @@
 // stdout is the MCP transport: nothing but protocol goes there. Diagnostics
 // go to stderr, which the MCP client keeps in its log.
 //
-//   CDP_MCP_VERSION   chrome-devtools-mcp version to run (default chrome-devtools-mcp@1.9.0)
+//   CDP_MCP_VERSION   chrome-devtools-mcp version to run (default chrome-devtools-mcp@1.10.1)
 //   CDP_MAX_SLOTS     persistent profiles (default 8); beyond that a throwaway one
 //   CDP_IDLE_MINUTES  close an unused browser after this long (default 30; 0 = never)
 //   CDP_LAZY=0        start the server with the session, like the official plugin
@@ -32,7 +32,7 @@ const env = process.env;
 const nonNegative = (v, fallback) => (/^\d+(\.\d+)?$/.test(String(v ?? "")) ? Number(v) : fallback);
 
 const HOME = env.CDP_HOME || path.join(os.homedir(), ".cache", "chrome-devtools-mcp");
-const SPEC = env.CDP_MCP_VERSION || "chrome-devtools-mcp@1.9.0";
+const SPEC = env.CDP_MCP_VERSION || "chrome-devtools-mcp@1.10.1";
 const MAX_SLOTS = Math.max(1, Math.floor(nonNegative(env.CDP_MAX_SLOTS, 8)));
 const IDLE_MS = nonNegative(env.CDP_IDLE_MINUTES, 30) * 60 * 1000;
 const LAZY = env.CDP_LAZY !== "0";

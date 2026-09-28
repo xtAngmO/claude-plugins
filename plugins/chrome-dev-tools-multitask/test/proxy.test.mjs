@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { HANDSHAKE_ID, Proxy, VISIBILITY_TOOL, splitHeadless } from "../src/proxy.mjs";
 
 const INIT = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } };
-const INIT_RESULT = { protocolVersion: "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "chrome_devtools", version: "1.9.0" } };
+const INIT_RESULT = { protocolVersion: "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "chrome_devtools", version: "1.10.1" } };
 const TOOLS = { tools: [{ name: "list_pages", inputSchema: { type: "object" } }] };
 const SHOWN_TOOLS = { tools: [...TOOLS.tools, VISIBILITY_TOOL] };
 const HIDDEN = ["--headless", "--viewport=1280x800"];
