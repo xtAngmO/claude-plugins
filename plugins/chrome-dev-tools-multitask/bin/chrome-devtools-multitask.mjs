@@ -18,32 +18,35 @@
 //   CDP_EXTRA_ARGS    more chrome-devtools-mcp flags, e.g. "--slim --channel=beta"
 //                     (--headless / --no-headless here only set the starting mode)
 //   CDP_HOME          where profiles and slots live (default ~/.cache/chrome-devtools-mcp)
-import { createHash } from "node:crypto";
+//   CDP_DEBUG_PORT=0  no local debug port on the browsers (default: one on
+//                     127.0.0.1, named in <profile>/DevToolsActivePort)
+//
+// While a browser server runs, <CDP_HOME>/live/<pid>.json names the Claude Code
+// session that owns it and the profile its Chrome runs on (see src/live.mjs).
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { createAnswers, createCache } from "../src/cache.mjs";
+import { readConfig } from "../src/config.mjs";
 import { frame, lineReader } from "../src/lines.mjs";
-import { Proxy, splitHeadless } from "../src/proxy.mjs";
+import { createLive } from "../src/live.mjs";
+import { Proxy } from "../src/proxy.mjs";
 import { killBrowsersOn, startServer } from "../src/server.mjs";
 import { createSlots } from "../src/slots.mjs";
 
-const env = process.env;
-const nonNegative = (v, fallback) => (/^\d+(\.\d+)?$/.test(String(v ?? "")) ? Number(v) : fallback);
-
-const HOME = env.CDP_HOME || path.join(os.homedir(), ".cache", "chrome-devtools-mcp");
-const SPEC = env.CDP_MCP_VERSION || "chrome-devtools-mcp@1.10.1";
-const MAX_SLOTS = Math.max(1, Math.floor(nonNegative(env.CDP_MAX_SLOTS, 8)));
-const IDLE_MS = nonNegative(env.CDP_IDLE_MINUTES, 30) * 60 * 1000;
-const LAZY = env.CDP_LAZY !== "0";
-// A headless flag among these only sets the starting mode (see splitHeadless),
-// and it must not split the cache scope or skip the bundled answers.
-const { headless: HEADLESS, rest: EXTRA } = splitHeadless(
-  [...(env.CDP_EXTRA_ARGS ?? "").split(/\s+/).filter(Boolean), ...process.argv.slice(2)],
-  /^(1|true)$/i.test(env.CDP_HEADLESS ?? ""),
-);
-// No usage statistics: no telemetry watchdog process next to every server.
-const SERVER_ARGS = ["--no-usage-statistics", `--logFile=${path.join(HOME, "mcp.log")}`, ...EXTRA];
+// EXTRA is the user's flags. SERVER_ARGS adds the plugin's own (log file, no
+// usage statistics, debug port), which stay out of the cache scope.
+const {
+  home: HOME,
+  spec: SPEC,
+  maxSlots: MAX_SLOTS,
+  idleMs: IDLE_MS,
+  tickMs: TICK_MS,
+  lazy: LAZY,
+  headless: HEADLESS,
+  extra: EXTRA,
+  serverArgs: SERVER_ARGS,
+  scope,
+} = readConfig();
 
 const log = (msg) => process.stderr.write(`[chrome-devtools-multitask] ${msg}\n`);
 
@@ -54,8 +57,7 @@ function projectOf(dir) {
     if (path.dirname(d) === d) return process.platform === "win32" ? path.resolve(dir).toLowerCase() : path.resolve(dir);
   }
 }
-
-const scope = createHash("sha1").update(`${SPEC}\0${EXTRA.join(" ")}`).digest("hex").slice(0, 12);
+const PROJECT = projectOf(process.cwd());
 
 // What this version answers, recorded when the plugin was built
 // (scripts/snapshot.mjs), so even a machine's first session starts no server:
@@ -75,13 +77,14 @@ const cache = createAnswers({
   bundled: bundledAnswers(),
   scope,
 });
+const live = createLive({ home: HOME, project: PROJECT, log });
 const proxy = new Proxy({
   toClient: (msg) => process.stdout.write(frame(msg)),
   startServer: ({ args, onMessage, onExit }) => {
     const server = startServer({ spec: SPEC, args, onMessageChunk: lineReader(onMessage), onExit, log });
     return { write: (msg) => server.write(frame(msg)), stop: () => server.stop() };
   },
-  slots: createSlots({ home: HOME, maxSlots: MAX_SLOTS, project: projectOf(process.cwd()), log }),
+  slots: createSlots({ home: HOME, maxSlots: MAX_SLOTS, project: PROJECT, log }),
   cache,
   killBrowsers: (profile) => killBrowsersOn(profile, log),
   log,
@@ -90,6 +93,7 @@ const proxy = new Proxy({
   extraArgs: SERVER_ARGS,
   cacheScope: scope,
   headless: HEADLESS,
+  live,
 });
 
 let ending = false;
@@ -105,4 +109,6 @@ process.stdin.on("data", lineReader((msg) => proxy.fromClient(msg), (line) => lo
 process.stdin.on("end", end);
 process.stdin.on("error", end);
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, end);
-setInterval(() => { proxy.tick(); }, nonNegative(env.CDP_TICK_MS, 30 * 1000)).unref();
+// However this process ends (an uncaught error, say), no live file outlives it.
+process.on("exit", () => live.remove());
+setInterval(() => { proxy.tick(); }, TICK_MS).unref();

@@ -27,8 +27,8 @@
     {
       "name": "chrome-dev-tools-multitask",
       "source": "./plugins/chrome-dev-tools-multitask",
-      "version": "1.3.0",
-      "description": "chrome-devtools-mcp for many sessions at once: a Chrome window with its own persistent profile per browsing session (sticky per project; hidden on request), no browser server for sessions that never browse, unused browsers closed after 30 minutes.",
+      "version": "1.4.0",
+      "description": "chrome-devtools-mcp for many sessions at once: a Chrome window with its own persistent profile per browsing session (sticky per project; hidden on request), no browser server for sessions that never browse, unused browsers closed after 30 minutes. A local debug port and a discovery file per browser let a companion app show a session's page live.",
       "category": "development",
       "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/chrome-dev-tools-multitask",
       "repository": "https://github.com/xtAngmO/claude-plugins",

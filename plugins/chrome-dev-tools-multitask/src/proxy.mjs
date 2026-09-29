@@ -70,6 +70,7 @@ export class Proxy {
   #cacheScope;
   #now;
   #headless;
+  #live;
 
   #clientInit = null;      // the client's initialize params, replayed to every server we start
   #clientInitialized = false;
@@ -81,13 +82,13 @@ export class Proxy {
   #queue = [];             // client traffic waiting for the server to be ready
   #pending = new Map();    // client requests the server still owes an answer
   #toolsListIds = new Set();
-  #claimed = null;         // { slot, profile } while a server runs
+  #claimed = null;         // { slot, profile } while a server runs (slot null: a throwaway profile)
   #stopping = null;        // a stop still closing its browser and freeing its slot
   #startTimer = null;
   #startTimeoutMs;
   #lastActivity = 0;
 
-  constructor({ toClient, startServer, slots, cache, log = () => {}, killBrowsers = () => {}, idleMs = 30 * 60 * 1000, lazy = true, extraArgs = [], cacheScope = "", now = () => Date.now(), headless = false, startTimeoutMs = 120_000 }) {
+  constructor({ toClient, startServer, slots, cache, log = () => {}, killBrowsers = () => {}, idleMs = 30 * 60 * 1000, lazy = true, extraArgs = [], cacheScope = "", now = () => Date.now(), headless = false, startTimeoutMs = 120_000, live = { write() {}, remove() {} } }) {
     ({ headless: this.#headless, rest: this.#extraArgs } = splitHeadless(extraArgs, headless));
     this.#toClient = toClient;
     this.#startServer = startServer;
@@ -100,6 +101,7 @@ export class Proxy {
     this.#cacheScope = cacheScope;
     this.#now = now;
     this.#startTimeoutMs = startTimeoutMs;
+    this.#live = live;
   }
 
   get state() { return this.#state; }
@@ -244,9 +246,9 @@ export class Proxy {
   }
 
   #launch(clientInitialize) {
-    this.#claimed = this.#slots.claim();
+    this.#claimed = this.#slots.claim() ?? this.#slots.throwaway?.() ?? null;
     const profileArgs = this.#claimed ? [`--user-data-dir=${this.#claimed.profile}`] : ["--isolated=true"];
-    if (!this.#claimed) this.#log("every slot is taken; this browser gets a throwaway profile");
+    if (!this.#claimed?.slot) this.#log("every slot is taken; this browser gets a throwaway profile");
     const hasViewport = this.#extraArgs.some((a) => a.startsWith("--viewport"));
     const modeArgs = this.#headless ? ["--headless", ...(hasViewport ? [] : [`--viewport=${HIDDEN_VIEWPORT}`])] : [];
     let server = null;
@@ -256,6 +258,9 @@ export class Proxy {
       onExit: (code) => { if (server === this.#server) this.#exited(code); },
     });
     this.#server = server;
+    // Other programs on this machine (a live view) learn from this which
+    // session owns the browser and where to find its debug port.
+    this.#live.write({ slot: this.#claimed?.slot ?? null, profileDir: this.#claimed?.profile ?? null, headless: this.#headless });
     // A download that stalls or a server that never answers would otherwise
     // keep every call queued for ever.
     clearTimeout(this.#startTimer);
@@ -326,7 +331,7 @@ export class Proxy {
     const done = (async () => {
       await previous;
       await exited;
-      this.#cleanUp(claimed);
+      await this.#cleanUp(claimed);
     })();
     this.#stopping = done;
     await done;
@@ -341,6 +346,7 @@ export class Proxy {
     clearTimeout(this.#startTimer);
     this.#server = null;
     this.#state = "stopped";
+    this.#live.remove();
     const fail = (id) => this.#toClient({ jsonrpc: "2.0", id, error: { code: -32603, message: reason } });
     for (const id of this.#pending.values()) fail(id);
     this.#pending.clear();
@@ -358,12 +364,15 @@ export class Proxy {
   }
 
   // Normally the server closes its browser; this is the backstop for one that
-  // could not, so the slot's profile is free for the next browser.
+  // could not, so the slot's profile is free for the next browser. A
+  // throwaway profile is deleted instead; the promise is that deletion, so a
+  // session ending waits for it.
   #cleanUp(claimed) {
-    if (!claimed) return;
+    if (!claimed) return undefined;
     // Only when a browser still holds the profile: the process query behind
     // the kill costs about a second, and a clean exit leaves nothing to kill.
     if (this.#slots.busy?.(claimed.profile) ?? true) this.#killBrowsers(claimed.profile);
-    this.#slots.release(claimed.slot);
+    if (claimed.slot) { this.#slots.release(claimed.slot); return undefined; }
+    return this.#slots.discard?.(claimed.profile);
   }
 }

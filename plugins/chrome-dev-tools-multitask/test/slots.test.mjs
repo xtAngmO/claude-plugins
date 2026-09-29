@@ -113,6 +113,35 @@ test("a crashed Chrome's singleton files are cleared when its slot is claimed", 
   } finally { fs.rmSync(h, { recursive: true, force: true }); }
 });
 
+test("a DevToolsActivePort left by the last browser is cleared, so a reader never finds a dead port", () => {
+  const h = home();
+  try {
+    const profile = path.join(h, "chrome-profile");
+    fs.mkdirSync(profile, { recursive: true });
+    fs.writeFileSync(path.join(profile, "DevToolsActivePort"), "55892\n/devtools/browser/old\n");
+    assert.equal(session(h, 100, null).claim().profile, profile);
+    assert.equal(fs.existsSync(path.join(profile, "DevToolsActivePort")), false);
+  } finally { fs.rmSync(h, { recursive: true, force: true }); }
+});
+
+test("a throwaway profile is a fresh folder at a known path, and discard deletes only throwaways", async () => {
+  const h = home();
+  try {
+    const slots = session(h, 100, null, { tmpDir: h });
+    const slot = slots.claim();
+    const t = slots.throwaway();
+    assert.equal(t.slot, null);
+    assert.equal(path.dirname(t.profile), h);
+    assert.match(path.basename(t.profile), /^cdp-mt-profile-/);
+    assert.ok(fs.statSync(t.profile).isDirectory());
+    fs.mkdirSync(slot.profile, { recursive: true });
+    await slots.discard(slot.profile);
+    assert.ok(fs.existsSync(slot.profile), "a slot's profile is never deleted");
+    await slots.discard(t.profile);
+    assert.equal(fs.existsSync(t.profile), false);
+  } finally { fs.rmSync(h, { recursive: true, force: true }); }
+});
+
 test("the lock files are the standalone cdp-slot-chrome.mjs wrapper's: a pid, nothing else", () => {
   const h = home();
   try {

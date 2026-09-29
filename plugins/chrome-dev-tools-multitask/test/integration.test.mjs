@@ -44,13 +44,27 @@ function project(name) {
   return dir;
 }
 
-function browsersOn(profile) {
+// The command lines of the browsers running on exactly this profile.
+function browserCommandLines(profile) {
   const needle = profile.toLowerCase();
   const script = "$ProgressPreference='SilentlyContinue'; Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' OR Name='chrome-headless-shell.exe'\" | ForEach-Object { $_.CommandLine }";
   const out = process.platform === "win32"
     ? execFileSync("powershell.exe", ["-NoProfile", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
     : execFileSync("ps", ["-A", "-o", "args="], { encoding: "utf8" });
-  return out.split(/\r?\n/).filter((l) => l.toLowerCase().includes(`--user-data-dir=${needle}`)).length;
+  return out.split(/\r?\n/).filter((l) => l.toLowerCase().includes(`--user-data-dir=${needle}`));
+}
+const browsersOn = (profile) => browserCommandLines(profile).length;
+
+const liveFileOf = (pid) => path.join(HOME, "live", `${pid}.json`);
+
+async function waitFor(what, check, ms = 15000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const got = check();
+    if (got) return got;
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await sleep(200);
+  }
 }
 
 // The profile of the slot a session holds, read from the lock files it wrote.
@@ -176,15 +190,78 @@ test("an unused browser is closed and its slot freed; the next call reopens it o
   assert.ok(held, "a slot is held while browsing");
   const { lock, profile } = held;
   assert.ok(browsersOn(profile) > 0);
+  assert.ok(fs.existsSync(liveFileOf(s.child.pid)), "the live file names the running browser");
 
   const end = Date.now() + 30000;
   while (fs.existsSync(path.join(HOME, "slots", lock)) && Date.now() < end) await sleep(300);
   assert.equal(fs.existsSync(path.join(HOME, "slots", lock)), false, "slot released after the idle time");
   assert.equal(browsersOn(profile), 0, "and the browser closed");
   assert.match(s.stderr, /closing it/);
+  assert.equal(fs.existsSync(liveFileOf(s.child.pid)), false, "the live file went with it");
 
   const again = await s.request("tools/call", { name: "list_pages", arguments: {} });
   assert.match(again.result.content[0].text, /about:blank/);
   assert.equal(fs.readFileSync(path.join(HOME, "slots", lock), "utf8"), String(s.child.pid), "same slot, same profile");
+  assert.equal(JSON.parse(fs.readFileSync(liveFileOf(s.child.pid), "utf8")).profileDir, profile, "and back for the reopened browser");
   await s.end();
+});
+
+test("each browser answers on a local debug port, and a live file names the session that owns it", { skip, timeout: 180000 }, async () => {
+  const s = start(project("live"), { CLAUDE_PID: "424242", CLAUDE_CODE_SESSION_ID: "it-session" });
+  await s.open();
+  assert.equal(fs.existsSync(liveFileOf(s.child.pid)), false, "no browser yet, no live file");
+  await s.request("tools/call", { name: "list_pages", arguments: {} });
+  const held = profileHeldBy(s.child.pid);
+  assert.ok(held);
+
+  const record = JSON.parse(fs.readFileSync(liveFileOf(s.child.pid), "utf8"));
+  assert.deepEqual(Object.keys(record), ["version", "pid", "claudePid", "sessionId", "slot", "profileDir", "project", "headless", "startedAt"]);
+  assert.equal(record.version, 1);
+  assert.equal(record.pid, s.child.pid);
+  assert.equal(record.claudePid, 424242);
+  assert.equal(record.sessionId, "it-session");
+  assert.equal(record.slot, Number(held.lock.match(/\d+/)[0]));
+  assert.equal(record.profileDir, held.profile);
+  assert.equal(record.headless, true);
+
+  // Chrome writes the port it picked into the profile: line 1 the port, line 2 the browser's ws path.
+  const activePort = path.join(record.profileDir, "DevToolsActivePort");
+  const [port, wsPath] = await waitFor("DevToolsActivePort", () => fs.existsSync(activePort) && fs.readFileSync(activePort, "utf8").split(/\r?\n/));
+  assert.match(port, /^\d+$/);
+  const res = await fetch(`http://127.0.0.1:${port}/json/version`);
+  assert.equal(res.status, 200);
+  const version = await res.json();
+  assert.match(version.Browser, /Chrome/);
+  assert.ok(version.webSocketDebuggerUrl.endsWith(wsPath), "the port belongs to this browser");
+
+  const [cmd] = browserCommandLines(record.profileDir).filter((l) => !l.includes("--type="));
+  assert.match(cmd, /--remote-debugging-port=0/);
+  assert.match(cmd, /--remote-debugging-pipe/, "chrome-devtools-mcp still talks to it over the pipe");
+
+  await s.end();
+  assert.equal(fs.existsSync(liveFileOf(s.child.pid)), false, "the live file is gone with the session");
+});
+
+test("with every slot taken, the throwaway profile is one the live file can name, and it is deleted afterwards", { skip, timeout: 180000 }, async () => {
+  const one = { CDP_MAX_SLOTS: "1" };
+  const holder = start(project("holder"), one);
+  await holder.open();
+  await holder.request("tools/call", { name: "list_pages", arguments: {} });
+  const extra = start(project("extra"), one);
+  await extra.open();
+  const pages = await extra.request("tools/call", { name: "list_pages", arguments: {} });
+  assert.match(pages.result.content[0].text, /about:blank/);
+
+  const record = JSON.parse(fs.readFileSync(liveFileOf(extra.child.pid), "utf8"));
+  assert.equal(record.slot, null);
+  assert.match(path.basename(record.profileDir), /^cdp-mt-profile-/);
+  assert.ok(browsersOn(record.profileDir) > 0, "its browser runs there");
+  const activePort = path.join(record.profileDir, "DevToolsActivePort");
+  const [port] = await waitFor("DevToolsActivePort", () => fs.existsSync(activePort) && fs.readFileSync(activePort, "utf8").split(/\r?\n/));
+  assert.equal((await fetch(`http://127.0.0.1:${port}/json/version`)).status, 200);
+
+  await extra.end();
+  assert.equal(fs.existsSync(record.profileDir), false, "the throwaway profile is gone with its browser");
+  assert.equal(fs.existsSync(liveFileOf(extra.child.pid)), false);
+  await holder.end();
 });

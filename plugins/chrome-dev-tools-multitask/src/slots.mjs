@@ -50,8 +50,11 @@ export function profileBusyOn(platform, profile, { pidAlive = defaultPidAlive, r
 const defaultProfileBusy = (profile) => profileBusyOn(process.platform, profile);
 
 // A browser that crashed leaves these behind, and they block the next launch.
+// DevToolsActivePort outlives even a clean exit: gone, a program looking for
+// this profile's debug port finds none until the new browser writes its own,
+// instead of a port some other process may hold by now.
 function clearStaleLocks(profile) {
-  for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+  for (const name of ["SingletonLock", "SingletonCookie", "SingletonSocket", "DevToolsActivePort"]) {
     try { fs.rmSync(path.join(profile, name), { force: true, recursive: true }); } catch {}
   }
 }
@@ -65,8 +68,10 @@ export function createSlots({
   profileBusy = defaultProfileBusy,
   now = () => Date.now(),
   pid = process.pid,
+  tmpDir = os.tmpdir(),
 }) {
   const dir = path.join(home, "slots");
+  const throwaways = new Set();
   const lockOf = (n) => path.join(dir, `slot-${n}.lock`);
   const metaOf = (n) => path.join(dir, `slot-${n}.json`);
   // Slot 1 is the profile chrome-devtools-mcp used before slots existed, so
@@ -168,6 +173,27 @@ export function createSlots({
       if (!n) return;
       try { fs.writeFileSync(metaOf(n), JSON.stringify({ project, lastUsed: now() })); } catch {}
       unlock(n);
+    },
+
+    // With every slot taken: a fresh profile of our own, like --isolated, but
+    // at a path we know, so the browser's debug port can be found in it.
+    // → { slot: null, profile } or null when it cannot be made.
+    throwaway() {
+      try {
+        const profile = fs.mkdtempSync(path.join(tmpDir, "cdp-mt-profile-"));
+        throwaways.add(profile);
+        log(`throwaway profile: ${profile}`);
+        return { slot: null, profile };
+      } catch (e) {
+        log(`could not make a throwaway profile: ${e.message}`);
+        return null;
+      }
+    },
+
+    // Deletes a throwaway profile once its browser is gone; never a slot's.
+    discard(profile) {
+      if (!throwaways.delete(profile)) return Promise.resolve();
+      return fs.promises.rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
     },
   };
 }

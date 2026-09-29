@@ -26,10 +26,12 @@ plugins/typescript-lsp/            one tsserver per TypeScript project, shared b
   test/                            node:test; `npm test` inside plugins/typescript-lsp
 plugins/chrome-dev-tools-multitask/  chrome-devtools-mcp for many sessions (replaces chrome-devtools-mcp@claude-plugins-official)
   .mcp.json                        MCP server "chrome-devtools" = node bin/chrome-devtools-multitask.mjs
-  bin/chrome-devtools-multitask.mjs  wiring + CDP_* settings
+  bin/chrome-devtools-multitask.mjs  wiring only
+  src/config.mjs                   CDP_* settings -> server args, cache scope, debug port flag (unit tested)
   src/proxy.mjs                    answers initialize/tools/list from cache, starts the real server on
                                    the first call, idle close (pure, unit tested against a fake server)
-  src/slots.mjs                    numbered persistent profiles, pid locks, sticky per project
+  src/live.mjs                     <CDP_HOME>/live/<pid>.json: which session owns which browser
+  src/slots.mjs                    numbered persistent profiles, pid locks, sticky per project; throwaway profiles
   src/server.mjs                   runs chrome-devtools-mcp from npx's cache; kills a browser left on a profile
   src/cache.mjs, src/lines.mjs     the on-disk answer cache; JSON-lines framing
   data/answers-<spec>.json         bundled initialize/tools answers (scripts/snapshot.mjs), default flags only
@@ -45,6 +47,10 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 
 - **Slot lock files are shared** with the user's standalone `~/.claude/tools/cdp-slot-chrome.mjs`, which Codex still runs: same directory (`~/.cache/chrome-devtools-mcp/slots`), same `slot-N.lock` holding just a pid. Keep them compatible, or Codex and Claude Code will open two browsers on one profile. `slot-N.json` (project, last use) is ours alone; the old wrapper ignores it.
 - **The answer cache** is keyed by chrome-devtools-mcp version + extra args + the client's protocol version. A new version or new flags means one eager start, then lazy again.
+- **The plugin's own flags stay out of that key.** `config.mjs` keeps the user's flags in `extra` (the key, and any at all skips the bundled snapshot) and adds the plugin's own (`--logFile`, `--no-usage-statistics`, the debug port) only to `serverArgs`. A new plugin flag put in `extra` would make every machine start a server at `tools/list` time. `test/config.test.mjs` pins the default scope to the 1.3.0 value.
+- **The debug port needs the pipe asked for too.** Puppeteer adds `--remote-debugging-pipe` only when no `--remote-debugging-*` flag is given. With just `--chromeArg=--remote-debugging-port=0` it silently switches to a WebSocket. So the plugin passes both, and Chrome serves both at once (checked on Chrome 154). A user's own `--remote-debugging-port` replaces ours and is left alone.
+- **`DevToolsActivePort` outlives Chrome, even a clean exit.** `claim()` deletes it with the stale singleton files, so a reader never finds the previous browser's port in a slot profile.
+- **The live file (`live/<pid>.json`)** is written in `#launch` and removed in `#teardown`, so it exists exactly while the proxy has a server. The throwaway profile is our own `mkdtemp` folder instead of `--isolated`, because a reader needs `profileDir` to find the port. It is deleted after its browser closes. puipui's api-server reads these files for its live browser view.
 - **Closing stdin is how to stop the real server:** it exits and closes its Chrome (verified on 1.9.0 and 1.10.1). The browser kill in `server.mjs` is only the backstop for a server that was killed first.
 - **`--no-usage-statistics` is what removes the telemetry watchdog process.** Running the entry script from npx's cache removes the npx parent. One node per browsing session, instead of the official plugin's three per session.
 - **Hidden/visible belongs to the proxy.** `splitHeadless` strips every `--headless` / `--no-headless` from the pass-through flags and only uses it as the starting mode. Left in, it would pin the mode, and `set_browser_visible(true)` would restart a browser that is still hidden.

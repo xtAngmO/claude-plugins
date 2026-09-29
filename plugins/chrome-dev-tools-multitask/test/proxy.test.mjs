@@ -8,11 +8,11 @@ const TOOLS = { tools: [{ name: "list_pages", inputSchema: { type: "object" } }]
 const SHOWN_TOOLS = { tools: [...TOOLS.tools, VISIBILITY_TOOL] };
 const HIDDEN = ["--headless", "--viewport=1280x800"];
 
-function setup({ cached = true, idleMs = 1000, slotsFull = false, headless = true, busy, extraArgs = ["--no-usage-statistics"], startTimeoutMs } = {}) {
+function setup({ cached = true, idleMs = 1000, slotsFull = false, headless = true, busy, extraArgs = ["--no-usage-statistics"], startTimeoutMs, throwaway, live } = {}) {
   const out = [];
   const servers = [];
   const store = {};
-  const events = { claimed: [], released: [], killed: [] };
+  const events = { claimed: [], released: [], killed: [], live: [], discarded: [] };
   let clock = 0;
   if (cached) store["init"] = { "s|2025-06-18": INIT_RESULT }, store["tools"] = { "s|2025-06-18": TOOLS };
   const proxy = new Proxy({
@@ -26,6 +26,7 @@ function setup({ cached = true, idleMs = 1000, slotsFull = false, headless = tru
       claim: () => { if (slotsFull) return null; const c = { slot: events.claimed.length + 1, profile: `/profiles/${events.claimed.length + 1}` }; events.claimed.push(c); return c; },
       release: (n) => events.released.push(n),
       ...(busy ? { busy } : {}),
+      ...(throwaway ? { throwaway, discard: (profile) => events.discarded.push(profile) } : {}),
     },
     cache: { get: (k, key) => store[k]?.[key] ?? null, set: (k, key, v) => { store[k] = { ...(store[k] ?? {}), [key]: v }; } },
     killBrowsers: (profile) => events.killed.push(profile),
@@ -35,6 +36,7 @@ function setup({ cached = true, idleMs = 1000, slotsFull = false, headless = tru
     now: () => clock,
     ...(headless === null ? {} : { headless }),
     ...(startTimeoutMs ? { startTimeoutMs } : {}),
+    live: live ?? { write: (info) => events.live.push(["write", info]), remove: () => events.live.push(["remove"]) },
   });
   const client = (m) => proxy.fromClient({ jsonrpc: "2.0", ...m });
   const handshake = (s) => s.answer({ jsonrpc: "2.0", id: HANDSHAKE_ID, result: INIT_RESULT });
@@ -389,4 +391,94 @@ test("splitHeadless reads every spelling of the flag and keeps the rest in order
   assert.deepEqual(splitHeadless(["--headless", "--no-headless"], true), { headless: false, rest: [] }, "the last one wins");
   assert.deepEqual(splitHeadless(["--headlessness"], true), { headless: true, rest: ["--headlessness"] }, "not a prefix match");
   assert.deepEqual(splitHeadless([], true), { headless: true, rest: [] });
+});
+
+// The live file: written when a server starts, gone the moment it stops.
+const liveOps = (t) => t.events.live.map(([op, info]) => (op === "write" ? `write slot=${info.slot} ${info.profileDir} headless=${info.headless}` : op));
+
+test("the live file is written only once a tool call starts the server, not for a session that never browses", () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/list", params: {} });
+  assert.deepEqual(t.events.live, [], "initialize and tools/list start nothing and announce nothing");
+  t.client({ id: 2, method: "tools/call", params: { name: "list_pages" } });
+  assert.deepEqual(t.events.live, [["write", { slot: 1, profileDir: "/profiles/1", headless: true }]]);
+});
+
+test("a visibility switch removes the live file with the old browser and writes it for the new one, in the new mode", async () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  t.handshake(t.servers[0]);
+  t.servers[0].answer({ jsonrpc: "2.0", id: 1, result: {} });
+  t.client({ id: 2, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: true } } });
+  await tickOver();
+  assert.deepEqual(liveOps(t), ["write slot=1 /profiles/1 headless=true", "remove"]);
+  t.client({ id: 3, method: "tools/call", params: { name: "list_pages" } });
+  await tickOver();
+  assert.deepEqual(liveOps(t).slice(2), ["write slot=2 /profiles/2 headless=false"]);
+});
+
+test("a call queued behind a visibility switch starts the new browser, and its live file, right away", async () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  const first = t.servers[0];
+  let finishStop;
+  first.stop = () => new Promise((resolve) => { finishStop = resolve; });
+  t.handshake(first);
+  first.answer({ jsonrpc: "2.0", id: 1, result: {} });
+  t.client({ id: 2, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: true } } });
+  t.client({ id: 3, method: "tools/call", params: { name: "list_pages" } });
+  assert.deepEqual(liveOps(t), ["write slot=1 /profiles/1 headless=true", "remove"], "no new file while the old browser is closing");
+  finishStop();
+  await tickOver();
+  await tickOver();
+  assert.deepEqual(liveOps(t).slice(2), ["write slot=2 /profiles/2 headless=false"]);
+});
+
+test("the live file goes whenever the server stops: idle close, crash, start timeout, session end", async () => {
+  const idle = setup({ idleMs: 1000 });
+  idle.client({ id: 0, method: "initialize", params: INIT });
+  idle.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  idle.handshake(idle.servers[0]);
+  idle.servers[0].answer({ jsonrpc: "2.0", id: 1, result: {} });
+  idle.advance(2000);
+  await idle.proxy.tick();
+  assert.deepEqual(liveOps(idle), ["write slot=1 /profiles/1 headless=true", "remove"]);
+
+  const crash = setup();
+  crash.client({ id: 0, method: "initialize", params: INIT });
+  crash.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  crash.handshake(crash.servers[0]);
+  crash.servers[0].die(1);
+  assert.deepEqual(liveOps(crash), ["write slot=1 /profiles/1 headless=true", "remove"]);
+
+  const stalled = setup({ startTimeoutMs: 20 });
+  stalled.client({ id: 0, method: "initialize", params: INIT });
+  stalled.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(liveOps(stalled), ["write slot=1 /profiles/1 headless=true", "remove"]);
+
+  const ended = setup();
+  ended.client({ id: 0, method: "initialize", params: INIT });
+  ended.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  ended.handshake(ended.servers[0]);
+  await ended.proxy.close();
+  assert.deepEqual(liveOps(ended), ["write slot=1 /profiles/1 headless=true", "remove"]);
+});
+
+test("with every slot taken, a throwaway profile at a known path: announced with no slot, deleted after its browser", async () => {
+  const t = setup({ slotsFull: true, idleMs: 1000, throwaway: () => ({ slot: null, profile: "/tmp/cdp-mt-profile-x" }) });
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  assert.deepEqual(t.servers[0].args, ["--user-data-dir=/tmp/cdp-mt-profile-x", ...HIDDEN, "--no-usage-statistics"]);
+  assert.deepEqual(liveOps(t), ["write slot=null /tmp/cdp-mt-profile-x headless=true"]);
+  t.handshake(t.servers[0]);
+  t.servers[0].answer({ jsonrpc: "2.0", id: 1, result: {} });
+  t.advance(2000);
+  await t.proxy.tick();
+  assert.deepEqual(t.events.released, [], "no slot to give back");
+  assert.deepEqual(t.events.killed, ["/tmp/cdp-mt-profile-x"], "a browser left on it is closed first");
+  assert.deepEqual(t.events.discarded, ["/tmp/cdp-mt-profile-x"]);
 });
