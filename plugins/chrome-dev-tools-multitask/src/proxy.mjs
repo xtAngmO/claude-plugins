@@ -17,16 +17,16 @@ export const HANDSHAKE_ID = "cdp-mt:init";
 const LEVEL_ID = "cdp-mt:level";
 const idKey = (id) => JSON.stringify(id);
 
-// The browser runs hidden (headless) by default so a session's work never
-// pops a window over what the user is doing. This tool, answered by the proxy
-// itself, is the way back to a window when a person has to see or touch the
-// page. Headless Chrome defaults to an 800x600 viewport, which responsive
-// pages lay out as a tablet, so hidden browsers get a desktop-sized one.
+// The browser opens in a normal window by default, like the official plugin,
+// so the user can watch and step in. This tool, answered by the proxy itself,
+// hides it (headless) for unattended work and shows it again. Headless Chrome
+// defaults to an 800x600 viewport, which responsive pages lay out as a tablet,
+// so hidden browsers get a desktop-sized one.
 export const VISIBILITY_TOOL = {
   name: "set_browser_visible",
   description:
-    "Show or hide the Chrome window this session drives. The browser runs hidden (headless) by default so it never interrupts the user. " +
-    "Make it visible when the user has to see or use the page themselves: to sign in (2FA, SSO), solve a captcha, or watch what happens; hide it again afterwards. " +
+    "Show or hide the Chrome window this session drives. The browser opens in a normal window by default, so the user can watch and step in. " +
+    "Hide it (headless) for long unattended work so it does not cover the user's screen; show it again when the user has to see or use the page: to sign in (2FA, SSO), solve a captcha, or watch what happens. " +
     "Switching restarts the browser on the same profile: sign-ins and cookies are kept, but open pages are closed, so navigate again afterwards.",
   inputSchema: {
     type: "object",
@@ -87,7 +87,7 @@ export class Proxy {
   #startTimeoutMs;
   #lastActivity = 0;
 
-  constructor({ toClient, startServer, slots, cache, log = () => {}, killBrowsers = () => {}, idleMs = 30 * 60 * 1000, lazy = true, extraArgs = [], cacheScope = "", now = () => Date.now(), headless = true, startTimeoutMs = 120_000 }) {
+  constructor({ toClient, startServer, slots, cache, log = () => {}, killBrowsers = () => {}, idleMs = 30 * 60 * 1000, lazy = true, extraArgs = [], cacheScope = "", now = () => Date.now(), headless = false, startTimeoutMs = 120_000 }) {
     ({ headless: this.#headless, rest: this.#extraArgs } = splitHeadless(extraArgs, headless));
     this.#toClient = toClient;
     this.#startServer = startServer;

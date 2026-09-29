@@ -66,7 +66,8 @@ function start(cwd, env = {}) {
     cwd,
     // Idle long enough that checking for a browser (a slow process query on
     // Windows) never races the idle close.
-    env: { ...process.env, CDP_HOME: HOME, CDP_EXTRA_ARGS: "", CDP_IDLE_MINUTES: "0.15", CDP_TICK_MS: "300", ...env },
+    // Hidden, so the suite never opens windows (browsers are visible by default).
+    env: { ...process.env, CDP_HOME: HOME, CDP_EXTRA_ARGS: "", CDP_HEADLESS: "1", CDP_IDLE_MINUTES: "0.15", CDP_TICK_MS: "300", ...env },
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });

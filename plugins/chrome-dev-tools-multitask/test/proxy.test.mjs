@@ -33,7 +33,7 @@ function setup({ cached = true, idleMs = 1000, slotsFull = false, headless = tru
     extraArgs,
     cacheScope: "s",
     now: () => clock,
-    headless,
+    ...(headless === null ? {} : { headless }),
     ...(startTimeoutMs ? { startTimeoutMs } : {}),
   });
   const client = (m) => proxy.fromClient({ jsonrpc: "2.0", ...m });
@@ -139,7 +139,7 @@ test("a call arriving while the idle close is still running waits for it, then s
   assert.equal(t.servers[1].received.at(-1).id, 2, "the waiting call went to the new server");
 });
 
-test("browsers run hidden by default; set_browser_visible restarts a running one in a window", async () => {
+test("a hidden browser (CDP_HEADLESS=1): set_browser_visible restarts a running one in a window", async () => {
   const t = setup();
   t.client({ id: 0, method: "initialize", params: INIT });
   t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
@@ -177,6 +177,15 @@ test("CDP_HEADLESS=0 starts visible, and an explicit --viewport is left alone", 
   visible.client({ id: 0, method: "initialize", params: INIT });
   visible.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
   assert.equal(visible.servers[0].args.includes("--headless"), false);
+});
+
+test("with no mode configured, browsers open in a window", () => {
+  const t = setup({ headless: null });
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ id: 1, method: "tools/call", params: { name: "list_pages" } });
+  assert.deepEqual(t.servers[0].args, ["--user-data-dir=/profiles/1", "--no-usage-statistics"], "no --headless and no viewport of ours");
+  t.client({ id: 2, method: "tools/call", params: { name: "set_browser_visible", arguments: { visible: true } } });
+  assert.match(t.out.at(-1).result.content[0].text, /already runs in a normal window/);
 });
 
 test("a call still running keeps the browser open", async () => {

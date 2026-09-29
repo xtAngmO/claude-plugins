@@ -13,8 +13,8 @@
 //   CDP_MAX_SLOTS     persistent profiles (default 8); beyond that a throwaway one
 //   CDP_IDLE_MINUTES  close an unused browser after this long (default 30; 0 = never)
 //   CDP_LAZY=0        start the server with the session, like the official plugin
-//   CDP_HEADLESS=0    open browsers in a visible window (default: hidden; a session
-//                     can switch with the set_browser_visible tool)
+//   CDP_HEADLESS=1    run browsers hidden, headless (default: a visible window; a
+//                     session can switch with the set_browser_visible tool)
 //   CDP_EXTRA_ARGS    more chrome-devtools-mcp flags, e.g. "--slim --channel=beta"
 //                     (--headless / --no-headless here only set the starting mode)
 //   CDP_HOME          where profiles and slots live (default ~/.cache/chrome-devtools-mcp)
@@ -40,7 +40,7 @@ const LAZY = env.CDP_LAZY !== "0";
 // and it must not split the cache scope or skip the bundled answers.
 const { headless: HEADLESS, rest: EXTRA } = splitHeadless(
   [...(env.CDP_EXTRA_ARGS ?? "").split(/\s+/).filter(Boolean), ...process.argv.slice(2)],
-  env.CDP_HEADLESS !== "0",
+  /^(1|true)$/i.test(env.CDP_HEADLESS ?? ""),
 );
 // No usage statistics: no telemetry watchdog process next to every server.
 const SERVER_ARGS = ["--no-usage-statistics", `--logFile=${path.join(HOME, "mcp.log")}`, ...EXTRA];

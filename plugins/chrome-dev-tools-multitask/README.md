@@ -1,6 +1,6 @@
 # chrome-dev-tools-multitask
 
-A multi-session replacement for the official `chrome-devtools-mcp` plugin for Claude Code. Every session that opens a browser gets **its own Chrome on its own persistent profile**, running **hidden in the background** unless someone needs to see it. Sessions that never browse run **no browser server at all**. A browser nobody is using is closed after 30 minutes.
+A multi-session replacement for the official `chrome-devtools-mcp` plugin for Claude Code. Every session that opens a browser gets **its own Chrome on its own persistent profile**, in **a normal window you can watch**, hidden (headless) only when you ask for it. Sessions that never browse run **no browser server at all**. A browser nobody is using is closed after 30 minutes.
 
 It uses the same `chrome-devtools-mcp` (1.10.1), exposes the same 30 tools plus one of its own (`set_browser_visible`), and bundles the same skills.
 
@@ -21,7 +21,7 @@ It uses the same `chrome-devtools-mcp` (1.10.1), exposes the same 30 tools plus 
   A lock left by a process that died is taken over, by one session only when two find it at once. A profile some other browser still holds is skipped (on Windows its `lockfile` is open; on macOS and Linux its `SingletonLock` names a live process).
 - **Sticky per project.** A slot remembers which project (git repository) last used it. A project gets its own profile back when that slot is free. A new project takes an unclaimed slot before it borrows another project's.
 - **Lazy.** The plugin answers `initialize` and `tools/list` from a snapshot of what the real server says. The snapshot ships with the plugin (`data/`), and is learned on first use when you add extra flags. So even a machine's very first session starts nothing and downloads nothing: Claude Code gives an MCP server only 30 seconds to connect. It starts `chrome-devtools-mcp`, and claims a slot, only when a tool is actually called. The server runs straight from npx's cache: one node process, and no telemetry watchdog.
-- **Hidden by default.** Browsers run headless, so no window pops up over your work, with a 1280×800 viewport. Headless Chrome defaults to 800×600, which responsive pages lay out as a tablet. When you need to see or use the page yourself (to sign in with 2FA, solve a captcha, or watch what happens), ask Claude to show the browser. The `set_browser_visible` tool restarts it in a normal window on the same profile, so sign-ins are kept but open pages are closed. Ask again to hide it.
+- **A window by default.** Browsers open in a normal Chrome window, like the official plugin, so you can watch what happens, sign in with 2FA, or solve a captcha yourself. For long unattended work, ask Claude to hide the browser: the `set_browser_visible` tool restarts it headless on the same profile, with a 1280×800 viewport (headless Chrome defaults to 800×600, which responsive pages lay out as a tablet). Sign-ins are kept but open pages are closed. Ask again to show it. Set `CDP_HEADLESS=1` to start hidden instead.
 - **Idle close.** After 30 minutes without a tool call, the server is stopped. That closes its Chrome and frees the slot. The next call starts it again on the same project's profile, so sign-ins survive, but open tabs do not.
 - **Failures.** If the server or its browser dies, the calls it owed are answered with an error and the next call starts a fresh one. A server that has not answered within 2 minutes of starting (a stalled download, say) is given up on the same way. A browser still left on a profile is closed before the slot is given back.
 - **Cancelled calls.** A call Claude cancels before the browser is up is never sent, so a cancelled click never happens. One already running is passed on, and no longer keeps the browser from its idle close.
@@ -50,7 +50,7 @@ Set these in the environment Claude Code runs in.
 | `CDP_MAX_SLOTS` | `8` | Persistent profiles. Beyond this many browsers at once, a throwaway profile. |
 | `CDP_MCP_VERSION` | `chrome-devtools-mcp@1.10.1` | The chrome-devtools-mcp to run. |
 | `CDP_EXTRA_ARGS` | — | More chrome-devtools-mcp flags, e.g. `--slim` or `--viewport=1920x1080`. |
-| `CDP_HEADLESS` | on | `0` = open browsers in a visible window, like the official plugin. A session can still switch with `set_browser_visible`. A `--headless` or `--no-headless` in `CDP_EXTRA_ARGS` does the same: it sets how browsers start, and the tool can still switch them. |
+| `CDP_HEADLESS` | off | `1` = start browsers hidden (headless), with a 1280×800 viewport. A session can still switch with `set_browser_visible`. A `--headless` or `--no-headless` in `CDP_EXTRA_ARGS` does the same: it sets how browsers start, and the tool can still switch them. |
 | `CDP_LAZY` | on | `0` = start the server with the session, like the official plugin. |
 | `CDP_HOME` | `~/.cache/chrome-devtools-mcp` | Where profiles, slots and the cache live. |
 
