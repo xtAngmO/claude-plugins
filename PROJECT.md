@@ -37,6 +37,10 @@ plugins/chrome-dev-tools-multitask/  chrome-devtools-mcp for many sessions (repl
   data/answers-<spec>.json         bundled initialize/tools answers (scripts/snapshot.mjs), default flags only
   skills/                          chrome-devtools-mcp 1.10.1's skills, unchanged (Apache-2.0, see NOTICE)
   test/                            node:test; the integration suite needs chrome-devtools-mcp@1.10.1 in npx's cache
+plugins/working-agreement/         skills only (no code, no tests): the user's global working agreement
+  skills/<name>/SKILL.md           project-handoff-doc, parallel-subtasks, preview-ui-first, plan-docs,
+                                   test-every-change, frontend-design, reference-design-feature
+  skills/frontend-design/LICENSE.txt  that one skill is adapted from Anthropic's (Apache-2.0, see NOTICE)
 ```
 
 The two layers: **router + link** make one session look like one LSP client per project.
@@ -63,6 +67,13 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
   3. Run `npx chrome-devtools-mcp@<v> --help` once, so the integration suite finds it in the cache.
   4. Record its answers with `node scripts/snapshot.mjs chrome-devtools-mcp@<v>`. That writes `data/answers-<spec>.json`, which lets a first session start no server.
   5. Add the protocol version Claude Code uses if it changed: it was `2025-11-25` on 2.1.283.
+
+## Working on working-agreement
+
+- **The source of truth is `~/.claude/skills/<name>/SKILL.md`.** The plugin's copies were taken from there unchanged. The user still keeps those originals, so edit both, or copy over after editing the original, then bump the version.
+- **Placeholders stay as they are.** `<PLAN_DIR>`, `<DRAFT_DIR>`, the brand tokens and the test commands are filled per project (its `CLAUDE.md`). The README lists them with their defaults.
+- **Skills refer to each other by bare name** (`parallel-subtasks`, `test-every-change`, ...). Installed, they are `working-agreement:<name>`. Keep all seven together, or a reference points at nothing.
+- **Check it** with `claude plugin validate plugins/working-agreement`.
 
 ## Working on tsserverd
 

@@ -1,0 +1,14 @@
+working-agreement
+Copyright (c) 2026 xtAngmO — MIT License (see LICENSE)
+
+skills/frontend-design/SKILL.md is a modified version of the frontend-design
+skill from Anthropic's frontend-design plugin:
+
+  frontend-design
+  https://github.com/anthropics/claude-plugins-official
+  Copyright Anthropic, PBC
+  Licensed under the Apache License, Version 2.0 (see skills/frontend-design/LICENSE.txt)
+
+It is based on an earlier version of the upstream text and has been changed,
+among other things with a different description and a pointer to the
+preview-ui-first skill.

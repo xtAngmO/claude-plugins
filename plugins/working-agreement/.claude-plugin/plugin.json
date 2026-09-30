@@ -1,0 +1,20 @@
+{
+  "name": "working-agreement",
+  "version": "1.0.0",
+  "description": "A working agreement for Claude Code as seven skills that chain together: read PROJECT.md first and keep it current, fan non-trivial work out to parallel agents tracked in PROGRESS.md, mock UI as HTML options before building it, write plans as styled HTML, clone a reference site with Playwright, design distinctive frontends, and run the tests green after every change.",
+  "author": {
+    "name": "xtAngmO",
+    "url": "https://github.com/xtAngmO"
+  },
+  "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/working-agreement",
+  "repository": "https://github.com/xtAngmO/claude-plugins",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "workflow",
+    "parallel-agents",
+    "handoff",
+    "ui-preview",
+    "testing"
+  ]
+}
