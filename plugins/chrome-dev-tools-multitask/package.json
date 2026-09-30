@@ -1,6 +1,6 @@
 {
   "name": "chrome-dev-tools-multitask",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": true,
   "description": "chrome-devtools-mcp for many Claude Code sessions at once.",
   "type": "module",

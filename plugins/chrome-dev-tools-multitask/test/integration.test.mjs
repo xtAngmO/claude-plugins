@@ -5,6 +5,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -264,4 +265,23 @@ test("with every slot taken, the throwaway profile is one the live file can name
   assert.equal(fs.existsSync(record.profileDir), false, "the throwaway profile is gone with its browser");
   assert.equal(fs.existsSync(liveFileOf(extra.child.pid)), false);
   await holder.end();
+});
+
+test("a fresh browser's first new_page leaves no empty tab behind", { skip, timeout: 180000 }, async () => {
+  const site = http.createServer((req, res) => res.end("<title>Home</title><h1>home</h1>")).listen(0, "127.0.0.1");
+  await new Promise((r) => site.once("listening", r));
+  const url = `http://127.0.0.1:${site.address().port}/`;
+  try {
+    const s = start(project("blank-tab"));
+    await s.open();
+    const opened = await s.request("tools/call", { name: "new_page", arguments: { url } });
+    assert.doesNotMatch(opened.result.content[0].text, /about:blank/, "the session is not shown the empty tab");
+    const pages = await s.request("tools/call", { name: "list_pages", arguments: {} });
+    const listed = pages.result.content[0].text.split("\n").filter((l) => /^\d+: /.test(l));
+    assert.equal(listed.length, 1, `one page left, got:\n${pages.result.content[0].text}`);
+    assert.ok(listed[0].endsWith(`(${url}) [selected]`), `the page it opened is what is left, got: ${listed[0]}`);
+    await s.end();
+  } finally {
+    site.close();
+  }
 });

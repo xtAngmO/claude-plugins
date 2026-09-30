@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HANDSHAKE_ID, Proxy, VISIBILITY_TOOL, splitHeadless } from "../src/proxy.mjs";
+import { CLOSE_BLANK_ID, HANDSHAKE_ID, Proxy, VISIBILITY_TOOL, leftoverBlankTab, splitHeadless } from "../src/proxy.mjs";
 
 const INIT = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } };
 const INIT_RESULT = { protocolVersion: "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "chrome_devtools", version: "1.10.1" } };
@@ -481,4 +481,69 @@ test("with every slot taken, a throwaway profile at a known path: announced with
   assert.deepEqual(t.events.released, [], "no slot to give back");
   assert.deepEqual(t.events.killed, ["/tmp/cdp-mt-profile-x"], "a browser left on it is closed first");
   assert.deepEqual(t.events.discarded, ["/tmp/cdp-mt-profile-x"]);
+});
+
+const pagesText = (...lines) => ({ content: [{ type: "text", text: ["## Pages", ...lines].join("\n") }] });
+const newPage = (id, args = { url: "https://example.com/" }) => ({ id, method: "tools/call", params: { name: "new_page", arguments: args } });
+
+test("a browser's first new_page closes the empty tab Chrome started with, and the session is shown the page it opened", async () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ method: "notifications/initialized" });
+  t.client(newPage(1));
+  const [s] = t.servers;
+  t.handshake(s);
+  s.answer({ jsonrpc: "2.0", id: 1, result: pagesText("1: about:blank", "2: https://example.com/ [selected]") });
+  assert.deepEqual(s.received.at(-1), { jsonrpc: "2.0", id: CLOSE_BLANK_ID, method: "tools/call", params: { name: "close_page", arguments: { pageId: 1 } } });
+  assert.deepEqual(t.out.at(-1), { jsonrpc: "2.0", id: 1, result: pagesText("2: https://example.com/ [selected]") });
+  s.answer({ jsonrpc: "2.0", id: CLOSE_BLANK_ID, result: pagesText("2: https://example.com/ [selected]") });
+  assert.equal(t.out.length, 2, "the close's own answer stays between us and the server");
+
+  // Only the first one: an empty tab the session opens later is its own business.
+  t.client(newPage(2, { url: "about:blank" }));
+  s.answer({ jsonrpc: "2.0", id: 2, result: pagesText("2: https://example.com/", "3: about:blank [selected]") });
+  assert.equal(s.received.filter((m) => m.id === CLOSE_BLANK_ID).length, 1);
+  assert.deepEqual(t.out.at(-1).result, pagesText("2: https://example.com/", "3: about:blank [selected]"));
+
+  // A browser started again (idle close, visibility switch) has its own empty tab.
+  t.advance(2000);
+  await t.proxy.tick();
+  t.client(newPage(3));
+  const again = t.servers[1];
+  t.handshake(again);
+  again.answer({ jsonrpc: "2.0", id: 3, result: pagesText("1: about:blank", "2: https://example.com/ [selected]") });
+  assert.deepEqual(again.received.at(-1).params, { name: "close_page", arguments: { pageId: 1 } });
+});
+
+test("the empty tab is kept when the session has used it or asked for something else first", () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ method: "notifications/initialized" });
+  t.client(newPage(1, { url: "https://example.com/", isolatedContext: "clean" }));
+  const [s] = t.servers;
+  t.handshake(s);
+  s.answer({ jsonrpc: "2.0", id: 1, result: pagesText("1: about:blank", "2: https://example.com/ [selected] isolatedContext=clean") });
+  t.client(newPage(2));
+  s.answer({ jsonrpc: "2.0", id: 2, result: pagesText("1: about:blank", "2: https://example.com/", "3: https://example.com/ [selected]") });
+  assert.equal(s.received.some((m) => m.id === CLOSE_BLANK_ID), false, "an isolated page does not replace the tab, and only the first new_page counts");
+});
+
+test("leftoverBlankTab only answers for exactly the empty tab beside the new page", () => {
+  const two = pagesText("1: about:blank", "2: Example (https://example.com/) [selected]");
+  assert.deepEqual(leftoverBlankTab(two), { pageId: 1, result: pagesText("2: Example (https://example.com/) [selected]") });
+  assert.equal(two.content[0].text.includes("about:blank"), true, "the server's answer itself is not changed");
+
+  const trailing = { content: [{ type: "text", text: "## Pages\n1: about:blank\n2: https://a/ [selected]\n## Extension Pages\n5: chrome-extension://x/" }, { type: "image", data: "" }] };
+  assert.deepEqual(leftoverBlankTab(trailing), {
+    pageId: 1,
+    result: { content: [{ type: "text", text: "## Pages\n2: https://a/ [selected]\n## Extension Pages\n5: chrome-extension://x/" }, { type: "image", data: "" }] },
+  });
+
+  assert.equal(leftoverBlankTab(pagesText("1: https://used/", "2: https://a/ [selected]")), null, "the tab was used");
+  assert.equal(leftoverBlankTab(pagesText("1: about:blank", "2: https://restored/", "3: https://a/ [selected]")), null, "more pages than the two");
+  assert.equal(leftoverBlankTab(pagesText("1: about:blank [selected]", "2: https://a/")), null, "the empty tab is the selected one");
+  assert.equal(leftoverBlankTab({ ...pagesText("1: about:blank", "2: https://a/ [selected]"), isError: true }), null);
+  assert.equal(leftoverBlankTab({ content: [{ type: "text", text: "Navigation timeout" }] }), null);
+  assert.equal(leftoverBlankTab(pagesText("1: about:blank", "something else")), null, "a list it cannot read");
+  assert.equal(leftoverBlankTab(undefined), null);
 });

@@ -15,7 +15,35 @@
 
 export const HANDSHAKE_ID = "cdp-mt:init";
 const LEVEL_ID = "cdp-mt:level";
+export const CLOSE_BLANK_ID = "cdp-mt:close-blank";
 const idKey = (id) => JSON.stringify(id);
+
+// Chrome starts with one empty tab. Every page tool of chrome-devtools-mcp
+// 1.10 needs a pageId except new_page, so a session that has not listed the
+// pages yet opens its first page with new_page, and the empty tab stays open
+// beside it. When the answer to a browser's first new_page lists exactly that
+// empty tab and the new, selected page, this returns the empty tab's id and
+// the answer without it. The pages are read from the "## Pages" text, the only
+// form the server answers in by default; anything else is left alone (null).
+export function leftoverBlankTab(result) {
+  if (!result || result.isError || !Array.isArray(result.content)) return null;
+  const at = result.content.findIndex((c) => c?.type === "text" && typeof c.text === "string");
+  if (at < 0) return null;
+  const lines = result.content[at].text.split("\n");
+  const start = lines.indexOf("## Pages");
+  if (start < 0) return null;
+  const pages = [];
+  for (let i = start + 1; i < lines.length && lines[i] && !lines[i].startsWith("## "); i++) {
+    const m = /^(\d+): (.*?)( \[selected\])?$/.exec(lines[i]);
+    if (!m) return null;
+    pages.push({ id: Number(m[1]), label: m[2], selected: Boolean(m[3]), line: i });
+  }
+  const blank = pages.find((p) => !p.selected && p.label === "about:blank");
+  if (pages.length !== 2 || !blank || !pages.some((p) => p.selected)) return null;
+  lines.splice(blank.line, 1);
+  const content = result.content.map((c, i) => (i === at ? { ...c, text: lines.join("\n") } : c));
+  return { pageId: blank.id, result: { ...result, content } };
+}
 
 // The browser opens in a normal window by default, like the official plugin,
 // so the user can watch and step in. This tool, answered by the proxy itself,
@@ -87,6 +115,8 @@ export class Proxy {
   #startTimer = null;
   #startTimeoutMs;
   #lastActivity = 0;
+  #watchBlankTab = false;  // this browser has had no new_page yet
+  #firstNewPage = null;    // the id of its first new_page, until answered (see leftoverBlankTab)
 
   constructor({ toClient, startServer, slots, cache, log = () => {}, killBrowsers = () => {}, idleMs = 30 * 60 * 1000, lazy = true, extraArgs = [], cacheScope = "", now = () => Date.now(), headless = false, startTimeoutMs = 120_000, live = { write() {}, remove() {} } }) {
     ({ headless: this.#headless, rest: this.#extraArgs } = splitHeadless(extraArgs, headless));
@@ -225,6 +255,12 @@ export class Proxy {
 
   #write(msg) {
     if (msg.method !== undefined && msg.id !== undefined) this.#pending.set(idKey(msg.id), msg.id);
+    // A page in an isolated context lives in another browser context than the
+    // empty tab, so it does not take the tab's place.
+    if (this.#watchBlankTab && msg.method === "tools/call" && msg.params?.name === "new_page") {
+      this.#watchBlankTab = false;
+      if (msg.params.arguments?.isolatedContext === undefined) this.#firstNewPage = idKey(msg.id);
+    }
     this.#server.write(msg);
   }
 
@@ -251,6 +287,8 @@ export class Proxy {
     if (!this.#claimed?.slot) this.#log("every slot is taken; this browser gets a throwaway profile");
     const hasViewport = this.#extraArgs.some((a) => a.startsWith("--viewport"));
     const modeArgs = this.#headless ? ["--headless", ...(hasViewport ? [] : [`--viewport=${HIDDEN_VIEWPORT}`])] : [];
+    this.#watchBlankTab = true;
+    this.#firstNewPage = null;
     let server = null;
     server = this.#startServer({
       args: [...profileArgs, ...modeArgs, ...this.#extraArgs],
@@ -293,9 +331,23 @@ export class Proxy {
       return;
     }
     if (msg.method === undefined && msg.id === LEVEL_ID) return;
+    if (msg.method === undefined && msg.id === CLOSE_BLANK_ID) {
+      if (msg.error || msg.result?.isError) this.#log("could not close the empty tab the browser started with");
+      return;
+    }
     if (msg.method === undefined && msg.id !== undefined) {
       const key = idKey(msg.id);
       this.#pending.delete(key);
+      if (key === this.#firstNewPage) {
+        this.#firstNewPage = null;
+        const blank = leftoverBlankTab(msg.result);
+        // Sent before the answer goes on, so it runs before the session's
+        // next call; the session is shown the pages that will be left.
+        if (blank) {
+          this.#server.write({ jsonrpc: "2.0", id: CLOSE_BLANK_ID, method: "tools/call", params: { name: "close_page", arguments: { pageId: blank.pageId } } });
+          msg = { ...msg, result: blank.result };
+        }
+      }
       if (this.#toolsListIds.delete(key) && msg.result) {
         // The server's own list is what gets remembered; the session sees ours added.
         if (!msg.result.nextCursor) this.#cache.set("tools", this.#key(), msg.result);
@@ -358,6 +410,7 @@ export class Proxy {
     if (wasStarting && handshakeWasClient) fail(this.#handshakeId);
     this.#handshakeId = null;
     this.#toolsListIds.clear();
+    this.#firstNewPage = null;
     const claimed = this.#claimed;
     this.#claimed = null;
     return claimed;
