@@ -70,7 +70,7 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 
 ## Working on working-agreement
 
-- **The source of truth is `~/.claude/skills/<name>/SKILL.md`.** The plugin's copies were taken from there unchanged. The user still keeps those originals, so edit both, or copy over after editing the original, then bump the version.
+- **The plugin is the source of truth.** The skills came unchanged from `~/.claude/skills/`, and those copies were deleted once the plugin was installed. Edit them here, bump the version and push; the user's sessions get the change after `/plugin marketplace update xtangmo` and a restart.
 - **Placeholders stay as they are.** `<PLAN_DIR>`, `<DRAFT_DIR>`, the brand tokens and the test commands are filled per project (its `CLAUDE.md`). The README lists them with their defaults.
 - **Skills refer to each other by bare name** (`parallel-subtasks`, `test-every-change`, ...). Installed, they are `working-agreement:<name>`. Keep all seven together, or a reference points at nothing.
 - **Check it** with `claude plugin validate plugins/working-agreement`.
