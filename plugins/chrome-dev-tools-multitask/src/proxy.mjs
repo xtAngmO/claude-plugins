@@ -21,10 +21,13 @@ const idKey = (id) => JSON.stringify(id);
 // Chrome starts with one empty tab. Every page tool of chrome-devtools-mcp
 // 1.10 needs a pageId except new_page, so a session that has not listed the
 // pages yet opens its first page with new_page, and the empty tab stays open
-// beside it. When the answer to a browser's first new_page lists exactly that
-// empty tab and the new, selected page, this returns the empty tab's id and
-// the answer without it. The pages are read from the "## Pages" text, the only
-// form the server answers in by default; anything else is left alone (null).
+// beside it. A page in an isolated context opens in a window of its own, so
+// there the empty tab is left alone in the first window. When the answer to a
+// browser's first new_page lists exactly that empty tab and the new, selected
+// page, this returns the empty tab's id and the answer without it. The pages
+// are read from the "## Pages" text, the only form the server answers in by
+// default ("<id>: <label>", then " [selected]", then " isolatedContext=<name>"
+// for a page in one); anything else is left alone (null).
 export function leftoverBlankTab(result) {
   if (!result || result.isError || !Array.isArray(result.content)) return null;
   const at = result.content.findIndex((c) => c?.type === "text" && typeof c.text === "string");
@@ -34,11 +37,12 @@ export function leftoverBlankTab(result) {
   if (start < 0) return null;
   const pages = [];
   for (let i = start + 1; i < lines.length && lines[i] && !lines[i].startsWith("## "); i++) {
-    const m = /^(\d+): (.*?)( \[selected\])?$/.exec(lines[i]);
+    const m = /^(\d+): (.*?)( \[selected\])?( isolatedContext=.+)?$/.exec(lines[i]);
     if (!m) return null;
-    pages.push({ id: Number(m[1]), label: m[2], selected: Boolean(m[3]), line: i });
+    pages.push({ id: Number(m[1]), label: m[2], selected: Boolean(m[3]), isolated: Boolean(m[4]), line: i });
   }
-  const blank = pages.find((p) => !p.selected && p.label === "about:blank");
+  // The tab Chrome started with is in the default context, never an isolated one.
+  const blank = pages.find((p) => !p.selected && !p.isolated && p.label === "about:blank");
   if (pages.length !== 2 || !blank || !pages.some((p) => p.selected)) return null;
   lines.splice(blank.line, 1);
   const content = result.content.map((c, i) => (i === at ? { ...c, text: lines.join("\n") } : c));
@@ -255,11 +259,11 @@ export class Proxy {
 
   #write(msg) {
     if (msg.method !== undefined && msg.id !== undefined) this.#pending.set(idKey(msg.id), msg.id);
-    // A page in an isolated context lives in another browser context than the
-    // empty tab, so it does not take the tab's place.
+    // An isolated page counts too: it opens a window of its own and would leave
+    // the empty tab alone in the first one.
     if (this.#watchBlankTab && msg.method === "tools/call" && msg.params?.name === "new_page") {
       this.#watchBlankTab = false;
-      if (msg.params.arguments?.isolatedContext === undefined) this.#firstNewPage = idKey(msg.id);
+      this.#firstNewPage = idKey(msg.id);
     }
     this.#server.write(msg);
   }

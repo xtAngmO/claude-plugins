@@ -515,17 +515,31 @@ test("a browser's first new_page closes the empty tab Chrome started with, and t
   assert.deepEqual(again.received.at(-1).params, { name: "close_page", arguments: { pageId: 1 } });
 });
 
-test("the empty tab is kept when the session has used it or asked for something else first", () => {
+test("a first new_page in an isolated context closes the empty tab too, which would be left alone in its window", () => {
   const t = setup();
   t.client({ id: 0, method: "initialize", params: INIT });
   t.client({ method: "notifications/initialized" });
-  t.client(newPage(1, { url: "https://example.com/", isolatedContext: "clean" }));
+  t.client(newPage(1, { url: "https://example.com/", background: true, isolatedContext: "clean" }));
   const [s] = t.servers;
   t.handshake(s);
   s.answer({ jsonrpc: "2.0", id: 1, result: pagesText("1: about:blank", "2: https://example.com/ [selected] isolatedContext=clean") });
-  t.client(newPage(2));
-  s.answer({ jsonrpc: "2.0", id: 2, result: pagesText("1: about:blank", "2: https://example.com/", "3: https://example.com/ [selected]") });
-  assert.equal(s.received.some((m) => m.id === CLOSE_BLANK_ID), false, "an isolated page does not replace the tab, and only the first new_page counts");
+  assert.deepEqual(s.received.at(-1).params, { name: "close_page", arguments: { pageId: 1 } });
+  assert.deepEqual(t.out.at(-1).result, pagesText("2: https://example.com/ [selected] isolatedContext=clean"));
+});
+
+test("the empty tab is kept when the session has used it before its first new_page", () => {
+  const t = setup();
+  t.client({ id: 0, method: "initialize", params: INIT });
+  t.client({ method: "notifications/initialized" });
+  t.client({ id: 1, method: "tools/call", params: { name: "navigate_page", arguments: { pageId: 1, type: "url", url: "https://used/" } } });
+  const [s] = t.servers;
+  t.handshake(s);
+  s.answer({ jsonrpc: "2.0", id: 1, result: pagesText("1: https://used/ [selected]") });
+  t.client(newPage(2, { url: "https://example.com/", isolatedContext: "clean" }));
+  s.answer({ jsonrpc: "2.0", id: 2, result: pagesText("1: https://used/", "2: https://example.com/ [selected] isolatedContext=clean") });
+  t.client(newPage(3));
+  s.answer({ jsonrpc: "2.0", id: 3, result: pagesText("1: https://used/", "2: https://example.com/", "3: about:blank [selected]") });
+  assert.equal(s.received.some((m) => m.id === CLOSE_BLANK_ID), false, "the tab was used, and only the first new_page counts");
 });
 
 test("leftoverBlankTab only answers for exactly the empty tab beside the new page", () => {
@@ -538,6 +552,10 @@ test("leftoverBlankTab only answers for exactly the empty tab beside the new pag
     pageId: 1,
     result: { content: [{ type: "text", text: "## Pages\n2: https://a/ [selected]\n## Extension Pages\n5: chrome-extension://x/" }, { type: "image", data: "" }] },
   });
+
+  const isolated = pagesText("1: about:blank", "2: A (https://a/) [selected] isolatedContext=qr b");
+  assert.deepEqual(leftoverBlankTab(isolated), { pageId: 1, result: pagesText("2: A (https://a/) [selected] isolatedContext=qr b") });
+  assert.equal(leftoverBlankTab(pagesText("1: about:blank isolatedContext=x", "2: https://a/ [selected]")), null, "an empty page in an isolated context is not Chrome's start tab");
 
   assert.equal(leftoverBlankTab(pagesText("1: https://used/", "2: https://a/ [selected]")), null, "the tab was used");
   assert.equal(leftoverBlankTab(pagesText("1: about:blank", "2: https://restored/", "3: https://a/ [selected]")), null, "more pages than the two");
