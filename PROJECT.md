@@ -41,6 +41,12 @@ plugins/working-agreement/         skills only (no code, no tests): the user's g
   skills/<name>/SKILL.md           project-handoff-doc, parallel-subtasks, preview-ui-first, plan-docs,
                                    test-every-change, frontend-design, reference-design-feature
   skills/frontend-design/LICENSE.txt  that one skill is adapted from Anthropic's (Apache-2.0, see NOTICE)
+plugins/answer-for-me/             one skill + a read-only CLI: a session that stands in for the user
+  skills/answer-for-me/SKILL.md    the run: scope, find, answer, land approved work, wait, report
+                                   (`disable-model-invocation: true`: only the user's /answer-for-me starts it)
+  bin/peek.mjs                     prints this project's live sessions and what each is waiting on
+  src/sessions.mjs                 reads ~/.claude/sessions/*.json + transcripts (pure parts unit tested)
+  test/                            node:test; `npm test` inside plugins/answer-for-me
 ```
 
 The two layers: **router + link** make one session look like one LSP client per project.
@@ -75,6 +81,19 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 - **Placeholders stay as they are.** `<PLAN_DIR>`, `<DRAFT_DIR>`, the brand tokens and the test commands are filled per project (its `CLAUDE.md`). The README lists them with their defaults.
 - **Skills refer to each other by bare name** (`parallel-subtasks`, `test-every-change`, ...). Installed, they are `working-agreement:<name>`. Keep all seven together, or a reference points at nothing.
 - **Check it** with `claude plugin validate plugins/working-agreement`.
+
+## Working on answer-for-me
+
+- **It only reads Claude Code's own files.** `~/.claude/sessions/<pid>.json` (name, sessionId, cwd, status) is
+  what `ListAgents` shows; the transcript is `~/.claude/projects/<slug>/<sessionId>.jsonl`. `CLAUDE_CONFIG_DIR`
+  moves both. A session file outlives a crashed process, so `pidAlive` checks the pid. Node's
+  `process.kill(pid, 0)` only checks on Windows too; Python's `os.kill(pid, 0)` would terminate the process.
+- **Scope is the point.** The first real run answered sessions of five unrelated repos and the user pushed back.
+  `selectSessions` keeps only sessions whose cwd is inside `--project` (default: the current directory) and counts
+  the rest; `--all` is for when the user names other projects.
+- **Peers refuse relayed approval for push/migrate,** and that is correct. The skill tells the stand-in to land
+  that work itself, by exact SHA, when the user approved it in the stand-in session.
+- **Check it** with `npm test` and `claude plugin validate plugins/answer-for-me`.
 
 ## Working on tsserverd
 

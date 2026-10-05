@@ -59,6 +59,22 @@
         "ui-preview",
         "testing"
       ]
+    },
+    {
+      "name": "answer-for-me",
+      "source": "./plugins/answer-for-me",
+      "version": "1.0.0",
+      "description": "Stand in for the user while they step away: find this project's other Claude Code sessions that stopped on a question, answer them the way the user would, land the work the user approved (commit, push, migrate), and report what only the user can do. Runs only when you type /answer-for-me; Claude never starts it on its own.",
+      "category": "productivity",
+      "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/answer-for-me",
+      "repository": "https://github.com/xtAngmO/claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "skills",
+        "multi-session",
+        "delegation",
+        "workflow"
+      ]
     }
   ]
 }
