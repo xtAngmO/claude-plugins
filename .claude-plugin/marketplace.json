@@ -63,8 +63,8 @@
     {
       "name": "answer-for-me",
       "source": "./plugins/answer-for-me",
-      "version": "1.0.0",
-      "description": "Stand in for the user while they step away: find this project's other Claude Code sessions that stopped on a question, answer them the way the user would, land the work the user approved (commit, push, migrate), and report what only the user can do. Runs only when you type /answer-for-me; Claude never starts it on its own.",
+      "version": "1.1.0",
+      "description": "Stand in for the user while they step away: answer this project's other Claude Code sessions the way the user would, including their multiple-choice question dialogs (a hook hands each dialog to the stand-in instead of opening it), land the work the user approved (commit, push, migrate), and report what only the user can do. Runs only when you type /answer-for-me.",
       "category": "productivity",
       "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/answer-for-me",
       "repository": "https://github.com/xtAngmO/claude-plugins",

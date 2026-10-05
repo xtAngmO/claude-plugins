@@ -1,0 +1,18 @@
+{
+  "description": "answer-for-me: when a stand-in session is on for this project, hand an AskUserQuestion dialog to it and wait for its answer instead of opening the dialog. Exits at once when no stand-in is on.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/ask-guard.mjs\"",
+            "timeout": 660,
+            "statusMessage": "Waiting for the stand-in session to answer"
+          }
+        ]
+      }
+    ]
+  }
+}

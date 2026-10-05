@@ -45,7 +45,11 @@ plugins/answer-for-me/             one skill + a read-only CLI: a session that s
   skills/answer-for-me/SKILL.md    the run: scope, find, answer, land approved work, wait, report
                                    (`disable-model-invocation: true`: only the user's /answer-for-me starts it)
   bin/peek.mjs                     prints this project's live sessions and what each is waiting on
+  hooks/hooks.json                 PreToolUse on AskUserQuestion -> bin/ask-guard.mjs (every session)
+  bin/ask-guard.mjs                hands a dialog to the project's stand-in, waits, returns its answer
+  bin/standin.mjs                  the stand-in's side: on/off/watch/show/answer/pass/status
   src/sessions.mjs                 reads ~/.claude/sessions/*.json + transcripts (pure parts unit tested)
+  src/standin.mjs                  ~/.claude/answer-for-me/{active,asks}: markers, asks, answers
   test/                            node:test; `npm test` inside plugins/answer-for-me
 ```
 
@@ -91,6 +95,15 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 - **Scope is the point.** The first real run answered sessions of five unrelated repos and the user pushed back.
   `selectSessions` keeps only sessions whose cwd is inside `--project` (default: the current directory) and counts
   the rest; `--all` is for when the user names other projects.
+- **Dialogs are answered by a hook, not a message.** A session on an `AskUserQuestion` dialog doesn't read
+  messages until the dialog closes. `ask-guard.mjs` (PreToolUse) writes the questions to `asks/<id>.json`, polls
+  for `<id>.answer.json`, then prints `permissionDecision: "allow"` + `updatedInput: {questions, answers}`:
+  the tool resolves with those answers and no dialog opens. `answers` is keyed by question text, the value is
+  the option label (multi-select: labels joined by ", "). Checked by hand on 2.1.288 and 2.1.289 in a real
+  interactive session (`claude -p` has no AskUserQuestion, so it can't be tested headless). The tool result shows
+  only the picks; `additionalContext` is what tells the model who answered. `annotations` alone did not.
+- **The hook must never break a session:** every path exits 0, and no output means the normal dialog. Without a
+  live stand-in marker (pid alive) for the session's cwd it returns before touching anything.
 - **Peers refuse relayed approval for push/migrate,** and that is correct. The skill tells the stand-in to land
   that work itself, by exact SHA, when the user approved it in the stand-in session.
 - **Check it** with `npm test` and `claude plugin validate plugins/answer-for-me`.
