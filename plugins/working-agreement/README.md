@@ -8,7 +8,7 @@ A working agreement for Claude Code, packaged as seven skills. Each one triggers
 | --- | --- | --- |
 | `project-handoff-doc` | starting unfamiliar work · after a major change | Read **`PROJECT.md` first** instead of scanning the tree; create it if missing; update it after any **major** change (not hotfixes). |
 | `parallel-subtasks` | any **non-trivial** task | Split the work into independent subtasks, track them in `PROGRESS.md`, and **spawn one agent per subtask in a single message** so they run at the same time. |
-| `preview-ui-first` | any **UI** change or new screen | Mock it in self-contained HTML under `draft/` first, offer **2–3 options**, and **wait for the pick** before implementing. |
+| `preview-ui-first` | any **UI** change or new screen | Mock it in self-contained HTML under `draft/` first, offer **2–3 options** as clickable links, and **wait for the pick** before implementing. |
 | `plan-docs` | writing a plan, spec, requirement or design doc | Write it as **styled HTML in `plan/`**, never markdown. Plans are kept; drafts are thrown away. |
 | `test-every-change` | finishing **any** code change | Run **unit + integration** green; add **E2E** when the project has both a backend and a frontend. Don't report done on red. |
 | `frontend-design` | building or styling any UI | Commit to a distinctive, production-grade aesthetic instead of the generic AI look. |
