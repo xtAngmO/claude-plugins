@@ -108,6 +108,35 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
   that work itself, by exact SHA, when the user approved it in the stand-in session.
 - **Check it** with `npm test` and `claude plugin validate plugins/answer-for-me`.
 
+## Working on security-audit
+
+- **One skill, written from a real incident.** A sibling app (jcr-web, 2026-10-06..08) was taken over through four
+  weaknesses that chained together:
+  1. admin endpoints had no permission check;
+  2. the server-side sanitizer was regex-based;
+  3. an admin was lured to the page through support chat;
+  4. create-user/change-role never checked that the actor outranks the target role.
+
+  The audit of whmcs-web that followed is the worked example behind every reference file. Keep new patterns
+  concrete: what to grep, how to confirm, the fix.
+- **Read-only against production is the contract.** The only production touches the skill allows:
+  - one plain `GET` for headers;
+  - read-only DB queries that print counts, never values.
+
+  Don't add steps that send payloads or forge cookies against live systems.
+- **The scanner (`scripts/scan-serverfns.mjs`) has no dependencies and runs on node 18+ or bun.**
+  - It is a hand-written bracket matcher that understands strings, template literals, comments and regex literals.
+    A regex literal containing quotes (`/^["'`]+/`) used to swallow the next server function. The test pins that.
+  - It follows same-file `const alias = middleware` so `adminOnly = authMiddleware` reads as auth-only.
+  - Alias expressions may span lines, and a call to a local guard factory (`readGuard(P.calls)` where
+    `const readGuard = (p) =>\n requireAnyPermission(…)`) is resolved through the factory's body. Before that,
+    the fixed whmcs-web reported 18 permission-guarded recording fns as `none`. The test pins both cases.
+  - Imported aliases are classified by name only.
+  - Checked against whmcs-web: HEAD before the fix 395 fns (126 permission / 259 auth-only / 10 none), identical
+    to an AST scan; after the fix 396 fns (375 / 11 / 10). The 10 `none` are login/locale cookies; the 11 are
+    self-service.
+- **Check it** with `npm test` inside `plugins/security-audit` and `claude plugin validate plugins/security-audit`.
+
 ## Working on tsserverd
 
 - Run `npm test` in `plugins/typescript-lsp`. It covers:

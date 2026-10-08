@@ -1,0 +1,12 @@
+{
+  "name": "security-audit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Audit a web project for the attack chains that get apps hacked, then fix them in priority order.",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "license": "MIT"
+}

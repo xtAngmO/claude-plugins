@@ -75,6 +75,25 @@
         "delegation",
         "workflow"
       ]
+    },
+    {
+      "name": "security-audit",
+      "source": "./plugins/security-audit",
+      "version": "1.0.0",
+      "description": "Audit a web project for the attack chains that actually get apps hacked (unguarded endpoints, stored XSS reaching a staff browser, privilege escalation through user/role admin, forgeable sessions, AI/LLM tool abuse, sandbox and dependency blast radius) with parallel read-only agents, verify the findings, read production facts read-only, and fix them in priority order. Includes a server-function guard scanner for TanStack Start.",
+      "category": "security",
+      "homepage": "https://github.com/xtAngmO/claude-plugins/tree/main/plugins/security-audit",
+      "repository": "https://github.com/xtAngmO/claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "security",
+        "audit",
+        "xss",
+        "authorization",
+        "privilege-escalation",
+        "llm",
+        "tanstack-start"
+      ]
     }
   ]
 }
