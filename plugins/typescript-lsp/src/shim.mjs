@@ -4,6 +4,9 @@
 //
 //   TSD_DISABLE=1              behave exactly like typescript-language-server
 //   TSD_PROJECT_IDLE_MS        release a project unused this long (default 15 min)
+//   TSD_GLOBAL_PROJECT_IDLE_MS  … one checked with the global TypeScript (default 5 min)
+//   TSD_PRESSURE_PROJECT_IDLE_MS … any project while memory is low (default 5 min)
+//   TSD_PRESSURE_FREE_MB       "memory is low" = less available than this (memory.mjs)
 //   TSD_SYNTAX_SERVER=auto     keep typescript-language-server's second, syntax-only
 //                              tsserver (default: off — it only speeds up the first
 //                              seconds of a project load, for ~150 MB each)
@@ -14,6 +17,7 @@ import { resolveBackend, spawnBackend } from "./backend.mjs";
 import { capabilitiesFor } from "./capabilities.mjs";
 import { createLogger, createReader, encode, isAlive } from "./lib.mjs";
 import { ProjectLink } from "./link.mjs";
+import { underPressure } from "./memory.mjs";
 import { createProjectResolver, siblingTsserver } from "./project.mjs";
 import { Router } from "./router.mjs";
 
@@ -21,6 +25,8 @@ const ARGS = process.argv.slice(2);
 const log = createLogger("shim");
 const positiveInt = (v) => (/^\d+$/.test(String(v ?? "")) && Number(v) > 0 ? Number(v) : undefined);
 const PROJECT_IDLE_MS = positiveInt(process.env.TSD_PROJECT_IDLE_MS) ?? 15 * 60 * 1000;
+const GLOBAL_PROJECT_IDLE_MS = positiveInt(process.env.TSD_GLOBAL_PROJECT_IDLE_MS) ?? 5 * 60 * 1000;
+const PRESSURE_PROJECT_IDLE_MS = positiveInt(process.env.TSD_PRESSURE_PROJECT_IDLE_MS) ?? 5 * 60 * 1000;
 const IDLE_CHECK_MS = positiveInt(process.env.TSD_IDLE_CHECK_MS) ?? 60 * 1000;
 const SYNTAX_SERVER = process.env.TSD_SYNTAX_SERVER === "auto" ? "auto" : "never";
 const TYPE_ACQUISITION = process.env.TSD_TYPE_ACQUISITION === "on";
@@ -90,6 +96,8 @@ function route() {
     log,
     onExit: (code) => setTimeout(() => process.exit(code), 50),
     projectIdleMs: PROJECT_IDLE_MS,
+    globalProjectIdleMs: GLOBAL_PROJECT_IDLE_MS,
+    pressureProjectIdleMs: PRESSURE_PROJECT_IDLE_MS,
   });
 
   const read = createReader((msg) => router.fromClient(msg));
@@ -97,7 +105,13 @@ function route() {
   process.stdin.on("data", read);
   process.stdin.on("end", end);
   process.stdin.on("error", end);
-  setInterval(() => router.tick(Date.now()), IDLE_CHECK_MS).unref();
+  let pressed = false;
+  setInterval(() => {
+    const pressure = underPressure();
+    if (pressure !== pressed) log(pressure ? "memory is low: idle projects go after" : "memory is fine again: idle projects go after", pressure ? PRESSURE_PROJECT_IDLE_MS : PROJECT_IDLE_MS, "ms");
+    pressed = pressure;
+    router.tick(Date.now(), pressure);
+  }, IDLE_CHECK_MS).unref();
 
   // Nothing downstream watches the session's pid any more (daemons watch
   // themselves), so the shim notices a session that dies without saying goodbye.

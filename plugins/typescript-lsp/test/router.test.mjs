@@ -37,7 +37,7 @@ class FakeLink {
   }
 }
 
-function setup({ idleMs = 60000 } = {}) {
+function setup({ idleMs = 60000, globalIdleMs, pressureIdleMs } = {}) {
   const out = [];
   const links = {};
   let exited = null;
@@ -45,12 +45,15 @@ function setup({ idleMs = 60000 } = {}) {
     toClient: (m) => out.push(m),
     projectForFile: (file) => {
       const name = path.relative(BASE, file).split(path.sep)[0];
-      return { key: name, root: path.join(BASE, name), source: "project", library: name === "globalts" };
+      // "scratch*" folders have no TypeScript of their own.
+      return { key: name, root: path.join(BASE, name), source: name.startsWith("scratch") ? "global" : "project", library: name === "globalts" };
     },
     makeLink: (project, hooks) => (links[project.key] = new FakeLink(project, hooks)),
     capabilities: async () => ({ capabilities: { hoverProvider: true } }),
     onExit: (code) => { exited = code; },
     projectIdleMs: idleMs,
+    globalProjectIdleMs: globalIdleMs,
+    pressureProjectIdleMs: pressureIdleMs,
   });
   return { router, out, links, exited: () => exited };
 }
@@ -256,6 +259,49 @@ test("tick releases idle projects only: not busy ones, not recent ones", () => {
   assert.equal(links.web.released, 1);
   assert.equal(links.api.released, 0, "used recently");
   assert.equal(links.busy.released, 0, "has a request in flight");
+});
+
+test("a project checked with the global TypeScript (a scratch folder) goes sooner", () => {
+  const { router, links } = setup({ idleMs: 10000, globalIdleMs: 1000 });
+  router.fromClient(open("web", "a.ts"));
+  router.fromClient(open("scratch1", "b.ts"));
+  const now = Date.now();
+  links.web.lastUsed = now - 5000;
+  links.scratch1.lastUsed = now - 5000;
+  router.tick(now);
+  assert.equal(links.scratch1.released, 1);
+  assert.equal(links.web.released, 0, "a real project keeps the long wait");
+});
+
+test("while memory is low every idle project goes sooner; without pressure the long wait holds", () => {
+  const { router, links } = setup({ idleMs: 10000, pressureIdleMs: 1000 });
+  router.fromClient(open("web", "a.ts"));
+  router.fromClient(open("api", "c.ts"));
+  router.fromClient(open("busy", "e.ts"));
+  router.fromClient(hover(1, "busy", "e.ts"));
+  const now = Date.now();
+  for (const l of Object.values(links)) l.lastUsed = now - 5000;
+  links.api.lastUsed = now - 500;
+
+  router.tick(now, false);
+  assert.equal(links.web.released, 0, "no pressure: 5 s idle is not 10 s");
+
+  router.tick(now, true);
+  assert.equal(links.web.released, 1, "pressure: 5 s idle is past 1 s");
+  assert.equal(links.api.released, 0, "used half a second ago");
+  assert.equal(links.busy.released, 0, "a request in flight is never cut off");
+});
+
+test("the idle limits combine: the shortest one that applies wins", () => {
+  const { router } = setup({ idleMs: 900, globalIdleMs: 300, pressureIdleMs: 500 });
+  const project = { source: "project" };
+  const scratch = { source: "global" };
+  assert.equal(router.idleLimit(project, false), 900);
+  assert.equal(router.idleLimit(project, true), 500);
+  assert.equal(router.idleLimit(scratch, false), 300);
+  assert.equal(router.idleLimit(scratch, true), 300);
+  const plain = setup({ idleMs: 900 }).router;
+  assert.equal(plain.idleLimit(scratch, true), 900, "unset limits default to the main one");
 });
 
 test("shutdown is answered here; exit closes every project and ends the shim", () => {

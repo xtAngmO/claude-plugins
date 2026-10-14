@@ -20,6 +20,7 @@ process.env.TSD_RUN_DIR = RUN_DIR;
 process.env.TSD_NAMESPACE = `it-${process.pid}`;
 process.env.TSD_LOG ??= path.join(RUN_DIR, "test.log");
 process.env.TSD_IDLE_MS = "3000";
+process.env.TSD_PRESSURE_FREE_MB = "0"; // the machine's real memory must not change the timings; one test turns it on
 
 const { createReader, encode, endpointFor, ensureRunDir, isAlive, rootKey, statusFile } = await import("../src/lib.mjs");
 const { resolveBackend } = await import("../src/backend.mjs");
@@ -202,6 +203,41 @@ test("an idle project is released, then comes back with its files when touched",
   await s.diagnostics(p, (d) => d.length === 0, from);
   assert.equal(statusOf(p.dir)?.clients, 1, "reconnected");
   await s.close();
+});
+
+test("while memory is low an idle project goes sooner, its empty daemon exits sooner, and it comes back when touched", { skip, timeout: 120000 }, async () => {
+  const p = makeProject("pressure");
+  const s = startSession(p.dir, {
+    TSD_PRESSURE_FREE_MB: "100000000", // more than any machine has: always under pressure
+    TSD_PRESSURE_PROJECT_IDLE_MS: "800",
+    TSD_PRESSURE_IDLE_MS: "300",
+    TSD_IDLE_CHECK_MS: "200",
+    TSD_IDLE_MS: "60000", // without pressure the empty daemon would wait a minute
+  });
+  await s.initialize();
+  s.open(p);
+  await s.diagnostics(p, hasTypeError);
+  const { daemonPid } = statusOf(p.dir);
+  await until(() => statusOf(p.dir)?.clients === 0, 10000, "the release under pressure (the normal wait is 15 min)");
+  await until(() => !isAlive(daemonPid), 10000, "the empty daemon to exit long before its minute is up");
+
+  const from = s.messages.length;
+  s.edit(p, GOOD, 2);
+  await s.diagnostics(p, (d) => d.length === 0, from);
+  assert.notEqual(statusOf(p.dir)?.daemonPid, daemonPid, "a new daemon");
+  await s.close();
+});
+
+test("a tsserver that runs out of heap gets twice the cap the next time", { skip, timeout: 120000 }, async () => {
+  const p = makeProject("oom");
+  const capFile = path.join(RUN_DIR, `${rootKey(p.dir)}.cap.json`);
+  const s = startSession(p.dir, { TSD_MAX_TSSERVER_MEMORY: "16" }); // too little to load lib.d.ts
+  await s.initialize();
+  s.open(p);
+  const learned = await until(() => { try { return JSON.parse(fs.readFileSync(capFile, "utf8")); } catch { return null; } }, 60000, "the learned cap");
+  assert.equal(learned.mb, 32);
+  assert.match(learned.why, /16 MB/);
+  s.child.kill();
 });
 
 test("a crashed server comes back on the next edit; the session never notices", { skip, timeout: 120000 }, async () => {

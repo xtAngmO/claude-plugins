@@ -13,6 +13,7 @@
 //   * shutdown / exit  — one session leaving must not stop the shared server.
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { effectiveCap } from "./memory.mjs";
 
 const REQUEST_CANCELLED = -32800;
 
@@ -49,6 +50,7 @@ export class Broker {
   #pid;
   #memoryOverride;
   #memoryDefault;
+  #memoryFloor;
   #onEmpty;
   #onInitFailed;
   #onInitialize;
@@ -70,6 +72,7 @@ export class Broker {
     processId = process.pid,
     memoryOverride,
     memoryDefault,
+    memoryFloor,
     onEmpty = () => {},
     onInitFailed = () => {},
     onInitialize = () => {},
@@ -79,6 +82,7 @@ export class Broker {
     this.#pid = processId;
     this.#memoryOverride = memoryOverride;
     this.#memoryDefault = memoryDefault;
+    this.#memoryFloor = memoryFloor;
     this.#onEmpty = onEmpty;
     this.#onInitFailed = onInitFailed;
     this.#onInitialize = onInitialize;
@@ -245,10 +249,10 @@ export class Broker {
       processId: this.#pid,
       initializationOptions: {
         ...options,
-        // A large repo can outgrow the V8 default (~4 GB) on its own, and no cap
-        // at all is how a single instance reached 61.5 GB in
-        // anthropics/claude-code#87301.
-        maxTsServerMemory: this.#memoryOverride ?? options.maxTsServerMemory ?? this.#memoryDefault,
+        // No cap at all is how a single instance reached 61.5 GB in
+        // anthropics/claude-code#87301. The floor is what this project needed
+        // before (memory.mjs learnCap): a cap it already outgrew is never reused.
+        maxTsServerMemory: effectiveCap(this.#memoryOverride ?? options.maxTsServerMemory ?? this.#memoryDefault, this.#memoryFloor),
       },
     };
     this.#toBackend({ ...msg, id: gid, params: forwarded });

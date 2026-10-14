@@ -94,7 +94,7 @@ function status() {
     const ts = s.typescript?.version ? `TypeScript ${s.typescript.version}` : "TypeScript not reported yet";
     console.log(`${s.root}`);
     console.log(`  sessions ${s.clients} now · ${s.peakClients} at peak · ${s.openDocuments} open files · ${ts}`);
-    console.log(`  daemon ${s.daemonPid} · backend ${s.backendPid ?? "-"} · ${procs.length ? gb(bytes) : "memory unknown"} · cap ${s.maxTsServerMemory} MB per tsserver · since ${s.startedAt}`);
+    console.log(`  daemon ${s.daemonPid} · backend ${s.backendPid ?? "-"} · ${procs.length ? gb(bytes) : "memory unknown"} · cap ${s.maxTsServerMemory} MB per tsserver${s.learnedCap ? " (raised after a crash)" : ""} · since ${s.startedAt}`);
   }
 
   if (!procs.length) return;

@@ -16,6 +16,8 @@ plugins/typescript-lsp/            one tsserver per TypeScript project, shared b
   src/link.mjs                     session ↔ one project: daemon socket or private server,
                                    reconnect + re-open, idle release, failure pause
   src/project.mjs                  which project a file belongs to (nearest node_modules/typescript)
+  src/memory.mjs                   memory pressure (os.freemem vs TSD_PRESSURE_FREE_MB) and the heap cap:
+                                   default 6656 MB, doubled per project after a tsserver death (<key>.cap.json)
   src/capabilities.mjs             answers initialize; learned once from a probe, cached on disk
   src/daemon.mjs                   one per project; owns the named pipe or socket and the backend
   src/broker.mjs                   the multi-session rules inside a daemon (pure, unit tested)
@@ -214,4 +216,6 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 - **Unix sockets:** the socket file outlives a crashed daemon. The takeover is serialized by `<endpoint>.lock`, and the endpoint only counts as dead on `ECONNREFUSED`. The daemon listens on a private name and renames it into place, because libuv unlinks the listened-on path when the server closes.
 - **Claude Code's LSP root is its current working directory, which follows `cd`.** That is why 1.0.x, which keyed by session root, rarely shared: one real session ended up rooted in `node_modules/better-auth`. 1.1.0 ignores the session root and routes by file.
 - **typescript-language-server picks TypeScript from the root's `node_modules`, and falls back to the global install.** A session rooted above several repos was therefore checked with the global TS. The router pins each project's own TS with `initializationOptions.tsserver.path`.
+- **A 12 GB heap cap is mostly garbage.** V8 grows the old generation toward its limit before collecting. With 12288 MB one tsserver read 6.7 GB and, a minute later in the same process, 2.9 GB. The biggest repo measured (fastagent-web-client, 6,227 files) keeps 4.15–4.3 GB live during a full check, and peaked at 8.0 GB of private memory under 12288 versus 5.4 GB under 6656, with the same check time and 12–60 ms full-GC pauses. To measure a repo's live heap, run its own `tsserver.js` with `--trace-gc --max-old-space-size=12288`, `open` one file per tsconfig, `geterrForProject`, and read the largest "after" value of the Mark-Compact lines (2026-10-15, 14 repos).
+- **Release, don't kill.** A session's link counts every lost connection, and three in two minutes make it give up on that project for five minutes. That is why memory pressure shortens the idle waits (graceful `release()` and an empty daemon exiting) instead of stopping busy daemons.
 - **Diagnostics timing:** Claude Code hands diagnostics to the model on the *next* tool call after an edit. A session that ends its turn right after editing never shows them. That is Claude Code's behaviour, not a delivery bug.

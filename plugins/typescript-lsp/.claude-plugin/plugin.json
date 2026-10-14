@@ -1,7 +1,7 @@
 {
   "name": "typescript-lsp",
-  "version": "1.1.1",
-  "description": "TypeScript/JavaScript LSP for Claude Code: one tsserver per project, shared by every session (instead of a 2-4 GB tsserver per session), checked with the project's own TypeScript, released when idle. Works on Windows.",
+  "version": "1.2.0",
+  "description": "TypeScript/JavaScript LSP for Claude Code: one tsserver per project, shared by every session (instead of a 2-4 GB tsserver per session), checked with the project's own TypeScript, released when idle and sooner when memory is short, with a measured heap cap. Works on Windows.",
   "author": {
     "name": "xtAngmO",
     "url": "https://github.com/xtAngmO"

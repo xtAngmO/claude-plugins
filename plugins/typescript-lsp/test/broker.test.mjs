@@ -71,6 +71,20 @@ test("a session's own memory cap is kept, and TSD_MAX_TSSERVER_MEMORY beats it",
   assert.equal(forced.backend[0].params.initializationOptions.maxTsServerMemory, 8192);
 });
 
+test("a project that outgrew its cap before starts with what it needed, whatever was asked for", () => {
+  const raised = setup({ memoryDefault: 6656, memoryFloor: 12288 });
+  raised.broker.fromClient(raised.join(), { jsonrpc: "2.0", id: 0, method: "initialize", params: {} });
+  assert.equal(raised.backend[0].params.initializationOptions.maxTsServerMemory, 12288);
+
+  const overridden = setup({ memoryOverride: 4096, memoryFloor: 8192 });
+  overridden.broker.fromClient(overridden.join(), { jsonrpc: "2.0", id: 0, method: "initialize", params: {} });
+  assert.equal(overridden.backend[0].params.initializationOptions.maxTsServerMemory, 8192, "TSD_MAX_TSSERVER_MEMORY is raised too");
+
+  const lower = setup({ memoryOverride: 8192, memoryFloor: 4096 });
+  lower.broker.fromClient(lower.join(), { jsonrpc: "2.0", id: 0, method: "initialize", params: {} });
+  assert.equal(lower.backend[0].params.initializationOptions.maxTsServerMemory, 8192, "never lowered");
+});
+
 test("sessions that initialize while the first is still pending all get the answer", () => {
   const ctx = setup();
   const a = ctx.join();

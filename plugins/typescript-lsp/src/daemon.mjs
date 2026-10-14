@@ -1,8 +1,10 @@
 // daemon.mjs — one per project root. Listens on the root's endpoint, owns one
 // typescript-language-server, and puts every session that connects through the
-// Broker. Exits 5 minutes (TSD_IDLE_MS) after the last session leaves, or as
-// soon as the backend dies — each session's link then reconnects on its next
-// message and re-opens its files.
+// Broker. Exits 5 minutes (TSD_IDLE_MS) after the last session leaves — 30
+// seconds (TSD_PRESSURE_IDLE_MS) while memory is low — or as soon as the
+// backend dies; each session's link then reconnects on its next message and
+// re-opens its files. A tsserver that dies doubles this project's heap cap for
+// every later start (memory.mjs).
 //
 //   node daemon.mjs --launch <root> [backend args…]   start detached, return at once
 //   node daemon.mjs <root> [backend args…]            be the daemon
@@ -12,6 +14,9 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Broker } from "./broker.mjs";
 import { resolveBackend, spawnBackend } from "./backend.mjs";
+import {
+  CAP_CEILING_MB, DEFAULT_TSSERVER_MEMORY_MB, effectiveCap, learnCap, learnedCap, nextCap, underPressure,
+} from "./memory.mjs";
 import { typescriptVersionAt } from "./project.mjs";
 import {
   IS_WINDOWS, createLogger, createReader, encode, endpointFor, ensureRunDir, rootKey, statusFile,
@@ -32,9 +37,9 @@ if (process.argv[2] === "--launch") {
 const [, , ROOT, ...BACKEND_ARGS] = process.argv;
 if (!ROOT) process.exit(2);
 
-const DEFAULT_TSSERVER_MEMORY_MB = 12288;
 const positiveInt = (v) => (/^\d+$/.test(String(v ?? "")) && Number(v) > 0 ? Number(v) : undefined);
 const IDLE_MS = positiveInt(process.env.TSD_IDLE_MS) ?? 5 * 60 * 1000;
+const PRESSURE_IDLE_MS = Math.min(IDLE_MS, positiveInt(process.env.TSD_PRESSURE_IDLE_MS) ?? 30 * 1000);
 const MEMORY_OVERRIDE = positiveInt(process.env.TSD_MAX_TSSERVER_MEMORY);
 
 ensureRunDir();
@@ -42,6 +47,7 @@ const log = createLogger("daemon");
 const KEY = rootKey(ROOT, process.env.TSD_DAEMON_FLAVOR || "");
 const ENDPOINT = endpointFor(KEY);
 const STATUS = statusFile(KEY);
+const LEARNED_CAP = learnedCap(KEY);
 const startedAt = new Date().toISOString();
 
 let server = null;
@@ -51,6 +57,8 @@ let idleTimer = null;
 let stopping = false;
 let peakClients = 0;
 let typescript = null; // { path, version } once the first session has initialized
+let cap = effectiveCap(MEMORY_OVERRIDE ?? DEFAULT_TSSERVER_MEMORY_MB, LEARNED_CAP); // what the tsserver got
+let tsserverDied = false;
 
 const broker = new Broker({
   toBackend: (msg) => {
@@ -60,11 +68,13 @@ const broker = new Broker({
   processId: process.pid,
   memoryOverride: MEMORY_OVERRIDE,
   memoryDefault: DEFAULT_TSSERVER_MEMORY_MB,
+  memoryFloor: LEARNED_CAP,
   onEmpty: () => { writeStatus(); scheduleIdleExit(); },
   onInitFailed: () => stop(1),
   onInitialize: (params) => {
     const p = params.initializationOptions?.tsserver?.path ?? null;
     typescript = { path: p, version: typescriptVersionAt(p) };
+    cap = params.initializationOptions?.maxTsServerMemory ?? cap;
     writeStatus();
   },
 });
@@ -82,7 +92,8 @@ function writeStatus() {
     peakClients,
     openDocuments: broker.openDocumentCount,
     typescript,
-    maxTsServerMemory: MEMORY_OVERRIDE ?? DEFAULT_TSSERVER_MEMORY_MB,
+    maxTsServerMemory: cap,
+    learnedCap: LEARNED_CAP,
     startedAt,
     updatedAt: new Date().toISOString(),
   };
@@ -95,11 +106,32 @@ function writeStatus() {
   }
 }
 
+// Nobody attached: wait IDLE_MS for someone to come back, but only
+// PRESSURE_IDLE_MS while memory is low. Pressure is looked at again every
+// PRESSURE_IDLE_MS, so a wait that started on a quiet machine still ends early
+// when memory runs out halfway through it.
 function scheduleIdleExit() {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    if (broker.clientCount === 0) { log("idle for", IDLE_MS, "ms; exiting"); stop(0); }
-  }, IDLE_MS);
+  const emptySince = Date.now();
+  const check = () => {
+    if (broker.clientCount !== 0) return;
+    const waited = Date.now() - emptySince;
+    if (waited >= IDLE_MS) { log("idle for", IDLE_MS, "ms; exiting"); stop(0); return; }
+    if (waited >= PRESSURE_IDLE_MS && underPressure()) { log("idle for", waited, "ms while memory is low; exiting"); stop(0); return; }
+    idleTimer = setTimeout(check, Math.min(PRESSURE_IDLE_MS, IDLE_MS - waited));
+  };
+  idleTimer = setTimeout(check, PRESSURE_IDLE_MS);
+}
+
+// typescript-language-server stops itself with "tsserver process has exited
+// (exit code: …)" when its tsserver dies, which is what running out of heap
+// looks like from here. The next daemon for this project gets twice the cap.
+function learnFromCrash(code) {
+  if (!code || !tsserverDied || cap >= CAP_CEILING_MB) return;
+  const next = nextCap(cap);
+  if (learnCap(KEY, next, `tsserver died with a ${cap} MB cap`)) {
+    log("tsserver died with a", cap, "MB cap; this project starts with", next, "MB from now on");
+  }
 }
 
 function startBackend() {
@@ -113,10 +145,14 @@ function startBackend() {
     return;
   }
   backend.on("error", (e) => { log("backend error:", e.message); stop(1); });
-  backend.on("exit", (code, signal) => { log("backend exited", code ?? signal); stop(code ? 1 : 0); });
+  backend.on("exit", (code, signal) => { log("backend exited", code ?? signal); learnFromCrash(code); stop(code ? 1 : 0); });
   backend.stdin.on("error", () => {});
   backend.stdout.on("data", createReader((msg) => broker.fromBackend(msg)));
-  backend.stderr.on("data", (d) => log("backend:", String(d).trim().slice(0, 500)));
+  backend.stderr.on("data", (d) => {
+    const text = String(d);
+    if (/tsserver process has exited/i.test(text)) tsserverDied = true;
+    log("backend:", text.trim().slice(0, 500));
+  });
   log("backend", backend.pid, "=", backendSpec.describe, "cwd", ROOT);
 }
 

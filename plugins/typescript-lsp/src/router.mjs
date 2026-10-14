@@ -50,6 +50,8 @@ export class Router {
   #log;
   #onExit;
   #idleMs;
+  #globalIdleMs;
+  #pressureIdleMs;
 
   #links = new Map();          // project key → link
   #docs = new Map();           // docKey → { uri, languageId, version, text, link }
@@ -58,7 +60,10 @@ export class Router {
   #nextServerRequest = 0;
   #last = null;
 
-  constructor({ toClient, projectForFile, makeLink, capabilities, log = () => {}, onExit = () => {}, projectIdleMs }) {
+  constructor({
+    toClient, projectForFile, makeLink, capabilities, log = () => {}, onExit = () => {},
+    projectIdleMs, globalProjectIdleMs = projectIdleMs, pressureProjectIdleMs = projectIdleMs,
+  }) {
     this.#toClient = toClient;
     this.#projectForFile = projectForFile;
     this.#makeLink = makeLink;
@@ -66,6 +71,8 @@ export class Router {
     this.#log = log;
     this.#onExit = onExit;
     this.#idleMs = projectIdleMs;
+    this.#globalIdleMs = globalProjectIdleMs;
+    this.#pressureIdleMs = pressureProjectIdleMs;
   }
 
   get links() { return [...this.#links.values()]; }
@@ -137,11 +144,20 @@ export class Router {
   }
 
   // Let projects nobody has used for a while go; their daemons then exit and
-  // take their tsservers with them.
-  tick(now = Date.now()) {
+  // take their tsservers with them. Projects checked with the global TypeScript
+  // (mostly scratch folders, quick to load again) go sooner, and every project
+  // goes sooner while memory is low.
+  tick(now = Date.now(), pressure = false) {
     for (const link of this.#links.values()) {
-      if (link.state === "ready" && link.inflight.size === 0 && now - link.lastUsed > this.#idleMs) link.release();
+      if (link.state === "ready" && link.inflight.size === 0 && now - link.lastUsed > this.idleLimit(link.project, pressure)) link.release();
     }
+  }
+
+  idleLimit(project, pressure = false) {
+    let ms = this.#idleMs;
+    if (project?.source === "global") ms = Math.min(ms, this.#globalIdleMs);
+    if (pressure) ms = Math.min(ms, this.#pressureIdleMs);
+    return ms;
   }
 
   close() {

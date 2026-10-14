@@ -22,8 +22,13 @@ Reading `status`:
   currently share that server. "TypeScript x.y.z" is the project's own version.
 - **No daemon running** is normal. A project's server starts the first time a
   session touches one of its files. A session lets go of a project after 15
-  minutes without using it, and the daemon exits 5 minutes after its last
-  session, so idle projects hold no memory.
+  minutes without using it (5 for a scratch folder checked with the global
+  TypeScript), and the daemon exits 5 minutes after its last session, so idle
+  projects hold no memory. While the machine is short of memory both waits
+  shrink: 5 minutes, then 30 seconds.
+- **"cap N MB per tsserver"** is the heap ceiling, 6656 MB by default.
+  "(raised after a crash)" means that project's tsserver once ran out of heap,
+  so it now starts with twice the cap (up to 12288 MB).
 - **`tsserver outside tsserverd`** counts tsservers this plugin does not own.
   They come from sessions started before tsserverd was enabled, or from
   sessions where the official `typescript-lsp` plugin is still on. Restarting

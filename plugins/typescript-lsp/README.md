@@ -40,9 +40,11 @@ Claude session C ─ shim ─┴────┴────► daemon: repo-api 
   - diagnostics go only to the sessions that have the file open;
   - one session's `shutdown` does not stop the server.
 - **Memory is handed back.**
-  - A session that has not touched a project for 15 minutes lets go of it.
+  - A session that has not touched a project for 15 minutes lets go of it. A folder checked with the global TypeScript (usually a scratch folder) goes after 5 minutes.
   - A daemon with no sessions left exits 5 minutes later, and its tsserver goes with it.
+  - **While the machine is short of memory** (less than an eighth of RAM available, at most 8 GB), idle projects go after 5 minutes and an empty daemon exits after 30 seconds. These are ordinary releases: nothing counts as a crash, and a project in use is never cut off.
   - Touching the project again brings the server back and re-opens the session's files.
+- **Each tsserver is capped at 6656 MB**, about 1.5 times the largest live heap measured on real repos (4.3 GB, 6,227 files, every one type-checked). With the old 12 GB cap V8 let garbage pile up: one tsserver measured 6.7 GB and, a minute later in the same process, 2.9 GB; the biggest repo peaked at 8.0 GB of memory with 12 GB allowed and 5.4 GB with 6656 MB, with no slower checks. A project whose tsserver dies starts with twice its cap from then on, up to 12288 MB, so a lower cap cannot lock a bigger repo out.
 - **Nothing that does not help Claude is started.** typescript-language-server's second, syntax-only tsserver and its @types downloader are off. Together they cost about 230 MB per project.
 - **Failures stay small.**
   - If a project's server crashes, the next edit starts a new one. The session and its other projects never notice.
@@ -81,7 +83,7 @@ Example output:
 ```
 C:\Users\me\code\my-repo
   sessions 3 now · 3 at peak · 4 open files · TypeScript 5.9.3
-  daemon 41236 · backend 41240 · 1.0 GB · cap 12288 MB per tsserver · since 2026-09-25T01:40:12Z
+  daemon 41236 · backend 41240 · 1.0 GB · cap 6656 MB per tsserver · since 2026-09-25T01:40:12Z
 
 tsserver under tsserverd: 1.0 GB
 tsserver outside tsserverd: 2 process(es), 6.8 GB
@@ -97,8 +99,12 @@ tsserverd reads these environment variables from the environment Claude Code run
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `TSD_PROJECT_IDLE_MS` | `900000` (15 min) | How long a session keeps a project it is not using. |
+| `TSD_GLOBAL_PROJECT_IDLE_MS` | `300000` (5 min) | The same, for a folder checked with the global TypeScript. |
+| `TSD_PRESSURE_PROJECT_IDLE_MS` | `300000` (5 min) | The same, for any project while memory is short. |
 | `TSD_IDLE_MS` | `300000` (5 min) | How long a daemon with no sessions waits before it exits. |
-| `TSD_MAX_TSSERVER_MEMORY` | `12288` | Memory cap per tsserver, in MB. It is a ceiling, not a reservation. With no cap, a single instance reached 61.5 GB in #87301. |
+| `TSD_PRESSURE_IDLE_MS` | `30000` (30 s) | The same, while memory is short. |
+| `TSD_PRESSURE_FREE_MB` | an eighth of RAM, at most `8192`; `0` on macOS | Memory is short when less than this many MB is available. `0` turns it off. macOS reports free memory without its file cache, so it reads low on a healthy machine; set a value there to opt in. |
+| `TSD_MAX_TSSERVER_MEMORY` | `6656` | Memory cap per tsserver, in MB. It is a ceiling, not a reservation. With no cap, a single instance reached 61.5 GB in #87301. A project whose tsserver died gets twice its cap from then on (up to 12288), even above this value. |
 | `TSD_SYNTAX_SERVER` | `never` | Set it to `auto` to keep typescript-language-server's syntax-only tsserver, which answers a little sooner while a big project is still loading. |
 | `TSD_TYPE_ACQUISITION` | off | Set it to `on` to download `@types` for plain JavaScript projects that have no `node_modules`. |
 | `TSD_DISABLE` | unset | Set it to `1` to skip all of the above and behave exactly like the official plugin. |
@@ -133,12 +139,14 @@ npm test
 
 This covers:
 
-- the broker, the router and project resolution, as unit tests;
+- the broker, the router, project resolution and the memory policies, as unit tests;
 - backend resolution;
 - an integration suite run with real processes, which covers:
   - routing across two projects;
   - sharing between sessions rooted in different folders;
   - releasing a project and reconnecting to it;
+  - releasing sooner while memory is short;
+  - raising the cap of a project whose tsserver ran out of heap;
   - recovering from a crash;
   - falling back to a private server;
   - three sessions starting at once.
@@ -151,10 +159,10 @@ The multiplexing design comes from [0oj/tsserverd](https://github.com/0oj/tsserv
 
 - Windows support;
 - routing per project instead of per session;
-- idle release;
+- idle release, sooner while memory is short;
 - the lean server settings;
 - crash recovery per project;
 - `$/cancelRequest` translation;
 - disk-authoritative edits;
-- a memory cap;
+- a measured memory cap that rises for a project that outgrows it;
 - a daemon that holds its endpoint before it starts the backend.
