@@ -1,17 +1,27 @@
 #!/usr/bin/env node
-// ask-guard.mjs — PreToolUse hook on AskUserQuestion, in every session.
+// ask-guard.mjs — PermissionRequest hook on AskUserQuestion, in every session.
 //
-// No live stand-in for this session's project: exits at once, the dialog opens
-// as usual. Otherwise it hands the questions to the stand-in and waits for its
-// answer (ANSWER_FOR_ME_WAIT_SECONDS, default 600). An answer resolves the tool
-// with no dialog; "pass", a timeout or any error falls back to the dialog.
-// It never blocks a session by failing: every path ends in exit 0.
+// Claude Code runs PermissionRequest hooks alongside the open dialog, in the
+// terminal UI and for a stream-json host like the desktop app (2.1.296): a hook
+// that answers first closes the dialog. So this hook offers every dialog to the
+// project's stand-in, including one that goes on duty after the dialog opened:
+// it writes the ask, then waits until
+//   - the stand-in answers: print allow + updatedInput.answers (the dialog closes);
+//   - the stand-in passes, or the ask is withdrawn: exit, the dialog stays the user's;
+//   - the user answers in the dialog (its tool_result reaches the transcript),
+//     the session exits, or ANSWER_FOR_ME_WAIT_SECONDS (default 86000) run out.
+//
+// In a subagent Claude Code waits for this hook *before* it shows the dialog.
+// There it waits only when a stand-in is already on, and only 10 minutes.
+// It never blocks a session by failing: every path ends in exit 0, and no
+// output means the user's dialog decides.
 import fs from "node:fs";
-import path from "node:path";
-import { claudeHome, readSessions } from "../src/sessions.mjs";
-import { activeFor, allowOutput, closeAsk, createAsk, readAnswer } from "../src/standin.mjs";
+import { DialogWatch } from "../src/dialog.mjs";
+import { claudeHome, pidAlive, readSessions } from "../src/sessions.mjs";
+import { activeFor, allowOutput, askExists, closeAsk, createAsk, readAnswer } from "../src/standin.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const POLL_MS = Number(process.env.ANSWER_FOR_ME_POLL_MS) || 1000;
 
 async function main() {
   const input = JSON.parse(fs.readFileSync(0, "utf8") || "{}");
@@ -22,26 +32,37 @@ async function main() {
 
   const home = claudeHome();
   const cwd = input.cwd || process.cwd();
-  const standIn = activeFor({ home, cwd, sessionId: input.session_id });
-  if (!standIn) return;
+  const sessionId = input.session_id;
+  const subagent = Boolean(input.agent_id);
+  if (subagent && !activeFor({ home, cwd, sessionId })) return;
 
-  const me = readSessions(home).find((s) => s.sessionId === input.session_id);
-  const id = createAsk({ home, standIn, sessionId: input.session_id, sessionName: me?.name, cwd, questions });
-  const waitMs = (Number(process.env.ANSWER_FOR_ME_WAIT_SECONDS) || 600) * 1000;
-  const deadline = Date.now() + waitMs;
+  const me = readSessions(home).find((s) => s.sessionId === sessionId);
+  const waitS = Number(process.env.ANSWER_FOR_ME_WAIT_SECONDS) || (subagent ? 600 : 86000);
+  const deadline = Date.now() + waitS * 1000;
+  const id = createAsk({
+    home, sessionId, sessionName: me?.name, sessionPid: me?.pid, agentId: input.agent_id, cwd, questions,
+  });
+  // A subagent's tool calls are in its own transcript, not in transcript_path.
+  const dialog = subagent ? null : new DialogWatch(input.transcript_path, questions);
+  let outcome = "timeout";
   try {
-    while (Date.now() < deadline) {
+    for (;;) {
+      if (dialog?.answered()) { outcome = "answered-in-dialog"; return; }
       const answer = readAnswer(id, home);
       if (answer) {
-        if (answer.pass || !answer.answers) return;
-        process.stdout.write(JSON.stringify(allowOutput(questions, answer.answers, standIn.name)));
+        if (answer.pass || !answer.answers) { outcome = "passed"; return; }
+        const by = answer.by || activeFor({ home, cwd, sessionId })?.name;
+        process.stdout.write(JSON.stringify(allowOutput(questions, answer.answers, by)));
+        outcome = "delivered";
         return;
       }
-      if (!fs.existsSync(path.join(home, "answer-for-me", "asks", `${id}.json`))) return;
-      await sleep(1000);
+      if (!askExists(id, home)) { outcome = "withdrawn"; return; }
+      if (me?.pid && !pidAlive(me.pid)) { outcome = "session-gone"; return; }
+      if (Date.now() >= deadline) return;
+      await sleep(POLL_MS);
     }
   } finally {
-    closeAsk(id, home);
+    closeAsk(id, home, outcome);
   }
 }
 

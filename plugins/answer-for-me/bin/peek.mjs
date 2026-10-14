@@ -8,6 +8,8 @@
 // projects' sessions; use it only when the user named them.
 import fs from "node:fs";
 import { analyseTranscript, claudeHome, clip, findTranscript, readSessions, selectSessions } from "../src/sessions.mjs";
+import { pendingAsks } from "../src/standin.mjs";
+import { questionKey } from "../src/dialog.mjs";
 
 const USAGE = "usage: peek.mjs --exclude <this-session-name> [--project <dir>] [--names a,b] [-n 4] [--all]";
 
@@ -30,7 +32,11 @@ function parseArgs(argv) {
 const args = parseArgs(process.argv.slice(2));
 const home = claudeHome();
 const { shown, skipped } = selectSessions(readSessions(home), args);
+const asks = pendingAsks({ home, sweep: false });
 const now = Date.now();
+// A dialog whose hook has an ask open can be answered with standin.mjs; one
+// without (a session started before answer-for-me 1.2.0) is the user's alone.
+const askFor = (s, q) => asks.find((a) => a.sessionId === s.sessionId && questionKey(a.questions) === questionKey(q.questions));
 const rule = "=".repeat(100);
 const indent = (s, pad) => String(s ?? "").replace(/\n/g, `\n${pad}`);
 
@@ -42,7 +48,11 @@ for (const s of shown) {
   if (!tp) { console.log("  (no transcript yet)"); continue; }
   const r = analyseTranscript(fs.readFileSync(tp, "utf8"), args.n);
   console.log(`  LAST USER PROMPT: ${indent(clip(r.lastPrompt, 600), "    ")}`);
-  for (const q of r.pending) console.log(`  >>> WAITING ON AskUserQuestion: ${clip(JSON.stringify(q), 2000)}`);
+  for (const q of r.pending) {
+    const a = askFor(s, q);
+    const how = a ? `ask ${a.id}, answer it with standin.mjs` : "no ask open for it, so only the user can answer it";
+    console.log(`  >>> WAITING ON AskUserQuestion (${how}): ${clip(JSON.stringify(q), 2000)}`);
+  }
   console.log("  TAIL:");
   for (const t of r.tail) console.log(`    ${indent(t, "      ")}`);
   console.log("  LAST ASSISTANT TEXT (full):");

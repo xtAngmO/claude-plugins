@@ -1,7 +1,7 @@
 {
   "name": "answer-for-me",
-  "version": "1.1.0",
-  "description": "Stand in for the user while they step away: answer this project's other Claude Code sessions the way the user would, including their multiple-choice question dialogs (a hook hands each dialog to the stand-in instead of opening it), land the work the user approved (commit, push, migrate), and report what only the user can do. Runs only when you type /answer-for-me.",
+  "version": "1.2.0",
+  "description": "Stand in for the user while they step away: answer this project's other Claude Code sessions the way the user would, including their multiple-choice question dialogs (a hook offers each open dialog to the stand-in, even one opened before it went on duty), land the work the user approved (commit, push, migrate), and report what only the user can do. Runs only when you type /answer-for-me.",
   "author": {
     "name": "xtAngmO",
     "url": "https://github.com/xtAngmO"

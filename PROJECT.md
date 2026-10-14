@@ -45,11 +45,14 @@ plugins/answer-for-me/             one skill + a read-only CLI: a session that s
   skills/answer-for-me/SKILL.md    the run: scope, find, answer, land approved work, wait, report
                                    (`disable-model-invocation: true`: only the user's /answer-for-me starts it)
   bin/peek.mjs                     prints this project's live sessions and what each is waiting on
-  hooks/hooks.json                 PreToolUse on AskUserQuestion -> bin/ask-guard.mjs (every session)
-  bin/ask-guard.mjs                hands a dialog to the project's stand-in, waits, returns its answer
+  hooks/hooks.json                 PermissionRequest on AskUserQuestion -> bin/ask-guard.mjs (every session)
+  bin/ask-guard.mjs                offers the open dialog to the stand-in, waits alongside it, returns its answer
   bin/standin.mjs                  the stand-in's side: on/off/watch/show/answer/pass/status
   src/sessions.mjs                 reads ~/.claude/sessions/*.json + transcripts (pure parts unit tested)
-  src/standin.mjs                  ~/.claude/answer-for-me/{active,asks}: markers, asks, answers
+  src/standin.mjs                  ~/.claude/answer-for-me/{active,asks}: markers, asks, answers, outcomes;
+                                   routes each ask to a stand-in when it is read
+  src/dialog.mjs                   has the user already answered this dialog? reads the transcript incrementally
+  scripts/e2e.mjs                  the dialog hook against a real claude, as the desktop app runs it (calls the API)
   test/                            node:test; `npm test` inside plugins/answer-for-me
 ```
 
@@ -95,15 +98,56 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 - **Scope is the point.** The first real run answered sessions of five unrelated repos and the user pushed back.
   `selectSessions` keeps only sessions whose cwd is inside `--project` (default: the current directory) and counts
   the rest; `--all` is for when the user names other projects.
-- **Dialogs are answered by a hook, not a message.** A session on an `AskUserQuestion` dialog doesn't read
-  messages until the dialog closes. `ask-guard.mjs` (PreToolUse) writes the questions to `asks/<id>.json`, polls
-  for `<id>.answer.json`, then prints `permissionDecision: "allow"` + `updatedInput: {questions, answers}`:
-  the tool resolves with those answers and no dialog opens. `answers` is keyed by question text, the value is
-  the option label (multi-select: labels joined by ", "). Checked by hand on 2.1.288 and 2.1.289 in a real
-  interactive session (`claude -p` has no AskUserQuestion, so it can't be tested headless). The tool result shows
-  only the picks; `additionalContext` is what tells the model who answered. `annotations` alone did not.
-- **The hook must never break a session:** every path exits 0, and no output means the normal dialog. Without a
-  live stand-in marker (pid alive) for the session's cwd it returns before touching anything.
+- **Dialogs are answered by a PermissionRequest hook that races the dialog, not by a message.** A session on an
+  `AskUserQuestion` dialog doesn't read messages until the dialog closes. Claude Code 2.1.296 runs PermissionRequest
+  hooks alongside the open dialog, and whichever answers first wins. In the bundle:
+  - SDK / stream-json path (the desktop app): `Promise.race([hook, can_use_tool request])`. When the hook wins,
+    `b.abort()` sends the host a `control_cancel_request` and the dialog closes.
+  - Terminal UI: the hooks run in the background through `runHooks`, and the first decision `claim()`s the dialog.
+
+  `ask-guard.mjs` prints `hookSpecificOutput` with `hookEventName: "PermissionRequest"` and
+  `decision: {behavior: "allow", updatedInput: {questions, answers, annotations}}`, and the tool resolves with those
+  answers. `answers` is keyed by question text, the value is the option label (multi-select: labels joined by
+  ", "). 1.1.0 used PreToolUse, which runs once, before the dialog opens: a stand-in that came on later could not
+  answer a dialog already on screen, and the user had to press Esc. Since 1.2.0 the dialog is always shown,
+  stand-in or not.
+- **The tool result carries the annotation notes** (`The user answered: "Q"="A" notes: Answered by <stand-in>,
+  the user's stand-in session (/answer-for-me), not typed by the user.`). That is how the asking model learns who
+  answered. PermissionRequest output has no `additionalContext`, and none is needed. Checked on 2.1.296.
+- **The hook is not stopped when the user answers in the dialog.** It is tied to the turn's abort signal, not to
+  the dialog: in one run it kept going ~13 s after the host answered, until claude exited. So `src/dialog.mjs`
+  (`DialogWatch`) reads `transcript_path` incrementally. The dialog's tool_use is the latest AskUserQuestion with
+  the same question texts; once a tool_result for that id is appended, the dialog is closed. The hook starts
+  before the dialog is shown, so tool_results already in the transcript at start belong to earlier dialogs and are
+  ignored. The hook input has no tool_use_id. Fields seen: session_id, transcript_path, cwd, prompt_id,
+  permission_mode, effort, hook_event_name, tool_name, tool_input, plus agent_id inside a subagent.
+- **Subagents and teammates wait for the hook *before* the dialog** (`awaitAutomatedChecksBeforeDialog`). So when
+  the input has `agent_id`, the hook keeps 1.1.0's rule: it waits only when a stand-in is already on, and at most
+  10 minutes, because the dialog is not shown meanwhile. A subagent's tool calls are in its own transcript, so
+  there is no `DialogWatch` there.
+- **Asks are routed when read, not when written.** The hook writes `asks/<id>.json` (hookPid, sessionPid, cwd,
+  questions) for every dialog, stand-in or not. `pickStandIn` gives an ask to the most specific live stand-in
+  whose project contains its cwd, never to the asking session itself, so a stand-in that comes on later sees
+  dialogs that were already open. `pendingAsks` drops (and, unless `sweep: false`, deletes) asks whose hookPid is
+  dead, 1.1.0 asks (no hookPid) older than 11 minutes, and `.done.json` files older than an hour. `peek.mjs`
+  reads with `sweep: false`, so it still writes nothing.
+- **Every ask ends in an outcome file.** On exit the hook writes `asks/<id>.done.json` (`delivered`, `passed`,
+  `answered-in-dialog`, `session-gone`, `withdrawn`, `timeout`) and removes the ask and its answer file.
+  `standin.mjs answer` and `pass` wait up to ~8 s for it and print what happened.
+- **How it was verified:** end to end with the real claude.exe 2.1.296 in the desktop app's mode
+  (`--input-format stream-json --permission-prompt-tool=stdio`) under a fake host, both ways: hook answers first
+  (the host gets `control_cancel_request`, the tool resolves with the hook's answers) and host answers first (the
+  hook keeps running; `DialogWatch` is what ends it). The terminal UI path was checked only by reading the bundle.
+  `scripts/e2e.mjs` repeats both cases with the plugin itself (`--plugin-dir`): a dialog open 6 s with no stand-in,
+  then `on` + `watch` + `answer` prints `delivered`; and the user answering first, after which the hook leaves
+  (`answered-in-dialog`) within a second while claude keeps running. Run it after every Claude Code update:
+  `STANDIN_NAME=<a live session's name> node scripts/e2e.mjs` (haiku, two short turns).
+- **Sessions started before 1.2.0 keep the 1.1.0 PreToolUse hook** until they restart, so a dialog they open
+  while no stand-in is on stays the user's. A 1.1.0 hook's ask is still answered by a 1.2.0 stand-in that was
+  already on: same asks directory, same answer file.
+- **The hook must never break a session:** every path exits 0, and no output means the user's dialog decides. In
+  a subagent, without a live stand-in marker (pid alive) for the session's cwd, it returns before touching
+  anything.
 - **Peers refuse relayed approval for push/migrate,** and that is correct. The skill tells the stand-in to land
   that work itself, by exact SHA, when the user approved it in the stand-in session.
 - **Check it** with `npm test` and `claude plugin validate plugins/answer-for-me`.

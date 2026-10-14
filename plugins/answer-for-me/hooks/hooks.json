@@ -1,15 +1,15 @@
 {
-  "description": "answer-for-me: when a stand-in session is on for this project, hand an AskUserQuestion dialog to it and wait for its answer instead of opening the dialog. Exits at once when no stand-in is on.",
+  "description": "answer-for-me: offer every AskUserQuestion dialog to this project's stand-in session (/answer-for-me), also one that goes on duty after the dialog opened. Claude Code runs this hook alongside the dialog; the user's pick or the stand-in's answer, whichever comes first, closes it. The hook exits when the dialog closes.",
   "hooks": {
-    "PreToolUse": [
+    "PermissionRequest": [
       {
         "matcher": "AskUserQuestion",
         "hooks": [
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/ask-guard.mjs\"",
-            "timeout": 660,
-            "statusMessage": "Waiting for the stand-in session to answer"
+            "timeout": 86400,
+            "statusMessage": "Waiting for you or the answer-for-me stand-in"
           }
         ]
       }

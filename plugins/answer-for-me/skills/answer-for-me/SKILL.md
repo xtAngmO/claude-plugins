@@ -34,10 +34,11 @@ alone.
    ```sh
    node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" watch --name <your-name>
    ```
-   From now on, when a session of this project calls `AskUserQuestion`, the plugin's hook hands the questions
-   to you instead of opening the dialog, and the Monitor prints `ASK <id> from <session>: …`. Answer it with
-   step 2's rules (see "Answering a dialog" below). Sessions started before this plugin was installed don't
-   have the hook; their dialogs still open for the user.
+   From now on every `AskUserQuestion` dialog of this project's sessions is yours to answer too, **including
+   dialogs that were already open before you went on duty**: the Monitor prints those first, then each new one,
+   as `ASK <id> from <session>: …`. Answer each with step 2's rules (see "Answering a dialog" below). The
+   dialog stays on the user's screen; your answer closes it. Sessions started before answer-for-me 1.2.0 still
+   run the old hook: a dialog they opened before you went on duty is the user's alone.
 3. From the project root:
    ```sh
    node "${CLAUDE_PLUGIN_ROOT}/bin/peek.mjs" --exclude <your-name>
@@ -52,9 +53,11 @@ alone.
    - **Idle, nothing asked**: skip it.
    - **Busy**: send a short note that you are answering for the user, plus any approval that clearly applies,
      with `notify_when_idle: true`. `SendMessage` needs a non-empty `message`; an empty one fails to parse.
-   - **A dialog already open on screen** (`>>> WAITING ON AskUserQuestion`, opened before you went on duty or
-     in a session without the hook): nothing but the user can answer that one, and a message won't be read
-     until it is. Put it in the report.
+   - **A dialog open on screen** (`>>> WAITING ON AskUserQuestion`):
+     - `(ask <id>, …)`: it is in your Monitor too. Answer it ("Answering a dialog"), however long it has been
+       open. Don't `SendMessage` the answer: the session won't read a message until the dialog closes.
+     - `(no ask open for it, …)`: a session without the 1.2.0 hook. Only the user can answer it, and a message
+       won't be read until they do. Put it in the report.
 
 ### Answering a dialog
 
@@ -63,14 +66,19 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" show <id>                 # numbere
 node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" answer <id> 1=2 2=1,3      # question=option(s), by number
 node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" answer <id> 1=:free text   # an answer that is not an option
 node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" answer <id> --file a.json  # {"1":[2],"2":"text"}; use for non-ASCII text
-node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" pass <id>                 # the user must decide: open the dialog
+node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" pass <id>                 # the user must decide: leave it on screen
 ```
 
-Read the asking session first (`peek.mjs --names <session>`) so you know what the question is about. The hook
-waits 10 minutes; after that, or on `pass`, the dialog opens for the user. Write free text in a file with the
-Write tool, not as a shell argument: non-ASCII arguments can be mangled on Windows. The asking session is told
-the answer came from you, the user's stand-in, not from the user. Use `pass` for the same things you must not
-decide in step 2.
+Read the asking session first (`peek.mjs --names <session>`) so you know what the question is about. The
+dialog is on the user's screen the whole time, and they may answer it before you do. `answer` and `pass` print
+how it ended:
+- `delivered`: the dialog closed with your answer.
+- `the user had already answered`: yours was not used. Read the session again before doing anything else for it.
+- `the asking session has exited`: the session is gone.
+
+Write free text in a file with the Write tool, not as a shell argument: non-ASCII arguments can be mangled on
+Windows. The asking session is told the answer came from you, the user's stand-in, not from the user. Use `pass`
+for the same things you must not decide in step 2.
 
 ## 2. Answer the way the user would
 
@@ -123,7 +131,7 @@ that session. Don't loop on `ListAgents`, and don't send "are you done?" message
 ## 5. Finish
 
 Stop when every in-scope session is done, idle with nothing asked, or blocked on something only the user can
-do. Go off duty so dialogs open for the user again, and stop the Monitor:
+do. Go off duty so dialogs are the user's alone again, and stop the Monitor:
 
 ```sh
 node "${CLAUDE_PLUGIN_ROOT}/bin/standin.mjs" off      # from the same project root as "on"

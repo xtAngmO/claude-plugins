@@ -18,8 +18,8 @@ Claude never starts it on its own (`disable-model-invocation: true`). It runs on
 2. **Answers like you.** It bases each answer on your `CLAUDE.md`, the project's memory, and the session's own
    recommendation, and sends it with `SendMessage`. It does not decide things only you can: screenshots,
    credentials, VPN, real money, rotating secrets, irreversible data changes. Those go into the report.
-   **Question dialogs too:** a session stuck on an `AskUserQuestion` dialog can't read messages, so the plugin
-   answers those before they open (see below).
+   **Question dialogs too:** a session stuck on an `AskUserQuestion` dialog can't read messages, so a hook
+   offers each open dialog to the stand-in, even one opened before it went on duty (see below).
 3. **Lands approved work.** Other sessions rightly refuse to push or migrate production on a relayed message.
    If you approved it in the stand-in session, that session does it itself: exact-SHA pushes, migrations before
    code and in order, and never a rebase or stash in a checkout other sessions share.
@@ -29,28 +29,39 @@ Claude never starts it on its own (`disable-model-invocation: true`). It runs on
 ## Question dialogs
 
 A dialog blocks its session until someone picks, and a cross-session message is only read at the session's next
-tool round, so a message can't answer it. The plugin's `PreToolUse` hook on `AskUserQuestion`
-(`bin/ask-guard.mjs`) runs in every session before the dialog opens:
+tool round, so a message can't answer it. The plugin's `PermissionRequest` hook on `AskUserQuestion`
+(`bin/ask-guard.mjs`) runs in every session, alongside the open dialog. Whoever answers first wins: you in the
+dialog, or the stand-in.
 
-- **No stand-in on for this project:** it exits at once and the dialog opens as usual.
-- **Stand-in on** (`standin.mjs on`): it writes the questions to `~/.claude/answer-for-me/asks/<id>.json` and
-  waits up to 10 minutes (`ANSWER_FOR_ME_WAIT_SECONDS`). The stand-in sees them through `standin.mjs watch` and
-  answers with `standin.mjs answer <id> 1=2 2=1,3`. The hook then returns `allow` with the answers, so the tool
-  resolves and no dialog opens. The asking session is told the answer came from the stand-in, not from you.
-- **`pass`, timeout or any error:** the dialog opens for you as usual.
+- **Every dialog is offered.** When a dialog opens, the hook writes its questions to
+  `~/.claude/answer-for-me/asks/<id>.json`, whether or not a stand-in is on, and waits. A stand-in that goes on
+  duty later (`standin.mjs on`) still sees the dialogs that are already open.
+- **The dialog is always on your screen,** even when a stand-in is on. You can still answer it yourself.
+- **The stand-in answers:** it sees the ask through `standin.mjs watch` and answers with
+  `standin.mjs answer <id> 1=2 2=1,3`. The hook returns `allow` with the answers, the tool resolves with them and
+  the dialog closes. The asking session is told the answer came from the stand-in, not from you.
+- **You answer first:** the hook sees your answer in the session's transcript and stops waiting. The stand-in's
+  answer is then not used, and `answer` says so.
+- **`pass`, the session exits, or any error:** the hook stops waiting and the dialog stays yours.
+- **How long it waits:** `ANSWER_FOR_ME_WAIT_SECONDS`, default 86000 (about a day). In a subagent Claude Code
+  waits for the hook before it shows the dialog, so there the hook waits only when a stand-in is already on, and
+  only 600 seconds by default.
 
 ```sh
-node bin/standin.mjs on --name <stand-in-session-name>   # from the project root
-node bin/standin.mjs watch --name <name>                 # one line per new question (run under Monitor)
+node bin/standin.mjs on --name <stand-in-session-name>   # from the project root; says how many dialogs are open
+node bin/standin.mjs watch --name <name>                 # open dialogs, ones already open first (run under Monitor)
 node bin/standin.mjs show <id>                           # numbered questions and options
 node bin/standin.mjs answer <id> 1=2 2=1,3 3=:free text  # or --file answers.json for non-ASCII text
-node bin/standin.mjs pass <id>                           # leave it to the user
-node bin/standin.mjs off                                 # dialogs open for the user again
-node bin/standin.mjs status
+node bin/standin.mjs pass <id>                           # leave it to the user (the dialog stays on screen)
+node bin/standin.mjs off                                 # dialogs are the user's alone again
+node bin/standin.mjs status                              # every open dialog and which stand-in covers it
 ```
 
-Sessions started before the plugin was installed don't have the hook, and a dialog that is already on screen
-can't be taken back. Those stay for you.
+`answer` and `pass` wait a few seconds for the hook and say how it ended: delivered (the dialog closed), you had
+already answered in the dialog, or the asking session has exited.
+
+Sessions started before 1.2.0 was installed keep the 1.1.0 hook until they restart. That hook only hands a dialog
+over when a stand-in is already on, so a dialog they open while no stand-in is on stays yours.
 
 ## peek.mjs
 
@@ -61,6 +72,7 @@ node bin/peek.mjs --exclude <me> --project D:/work/app      # another root
 node bin/peek.mjs --exclude <me> --all                      # every project (only when asked)
 ```
 
+Each open `AskUserQuestion` shows its ask id when the stand-in can answer it, or says only you can.
 Read-only. A session file can outlive its process after a crash, so each one's `pid` is checked first.
 
 ## Install
@@ -74,4 +86,9 @@ Read-only. A session file can outlive its process after a crash, so each one's `
 
 ```
 npm test
+STANDIN_NAME=<a live session's name> node scripts/e2e.mjs   # against a real claude; calls the API
 ```
+
+`scripts/e2e.mjs` runs claude the way the desktop app does (stream-json, `--permission-prompt-tool=stdio`) and
+checks both races: a stand-in that comes on after the dialog opened answers it, and the hook leaves when you
+answer first. Run it after a Claude Code update.
