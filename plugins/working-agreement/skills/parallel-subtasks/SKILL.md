@@ -16,6 +16,12 @@ week (2026-10-26): subagents were 60% of all usage, with ~2 subagent calls for e
 an average subagent context of 267k tokens. Next to a comparable user who seldom fanned out, that was
 most of a 5× difference in usage.
 
+Fan-out buys speed, not quality. Anthropic's guidance on folding subagents into the main loop
+(2026-10-22) found one agent with skills frequently beat a subagent design on quality, cost and latency,
+because detail is lost at every handoff. Vals AI's agent-team study (50 web apps) found teams cost
+1.8–5.1× more and helped significantly in one setup of four; Opus 5.5 at max effort cost 5.1× more and
+ran 2.3× slower for no significant gain.
+
 **Fan out only when all three hold** — or the user explicitly asks for parallel work:
 
 1. **3+ subtasks with no shared files and no ordering between them.**
@@ -23,12 +29,21 @@ most of a 5× difference in usage.
 3. **The main agent needs only a short result back,** not the details. If you would have to re-read what
    the agent read in order to use its result, do the work yourself.
 
-**Never fan out for:** a lookup or grep, reading a few files, an edit to one or a few files, reviewing or
-verifying your own change, writing mockups, running tests.
+**Split by context, not by role.** Good splits: independent research paths, components with a clean
+interface between them. Never split one feature into writer / tester / reviewer agents — whoever writes
+the feature writes its tests, because it already holds the context.
+
+**One allowed exception — a black-box verifier:** a single agent that runs the tests or checks, edits
+nothing, and reports pass/fail plus the failing lines. Use it only when the output would be long, so the
+log stays out of the main context.
+
+**Never fan out for:** a lookup or grep, reading a few files, an edit to one or a few files, reviewing
+your own change, writing mockups, running a short test command.
 
 **Limits:** at most **3 agents** per fan-out unless the user asks for more. Subagents never spawn agents
 of their own. Brief each agent narrowly and ask for a short report — paths and what changed — not file
-dumps.
+dumps. Workflows, when the user opts into one, follow the same logic: broad audits or research only, and
+small — going from 10 to 100 agents bought almost nothing in the measurements.
 
 `reference-design-feature` keeps its one-agent-per-task fan-out: the user starts it on purpose, with a
 URL, for a job that size.

@@ -1,6 +1,6 @@
 {
   "name": "working-agreement",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A working agreement for Claude Code as seven skills that chain together: read PROJECT.md first and keep it current, do the work in the main thread and fan large independent work out to parallel agents only when it pays (tracked in PROGRESS.md), mock UI as HTML options before building it, write plans as styled HTML, clone a reference site with Playwright, design distinctive frontends, and run the tests green after every change.",
   "author": {
     "name": "xtAngmO",
