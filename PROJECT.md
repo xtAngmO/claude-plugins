@@ -90,6 +90,7 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 - **Placeholders stay as they are.** `<PLAN_DIR>`, `<DRAFT_DIR>`, the brand tokens and the test commands are filled per project (its `CLAUDE.md`). The README lists them with their defaults.
 - **Skills refer to each other by bare name** (`parallel-subtasks`, `test-every-change`, ...). Installed, they are `working-agreement:<name>`. Keep all seven together, or a reference points at nothing.
 - **Check it** with `claude plugin validate plugins/working-agreement`.
+- **`parallel-subtasks` is gated by cost (1.2.0).** Main thread by default; fan out only for 3+ independent, large subtasks (or when the user asks), max 3 agents, no nesting. Before 1.2.0 it fanned out on "any non-trivial task", and one user's week measured subagents at 60% of usage. `preview-ui-first` writes its mockups without agents; `reference-design-feature` keeps its per-task fan-out.
 
 ## Working on answer-for-me
 

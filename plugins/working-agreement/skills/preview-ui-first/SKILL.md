@@ -18,8 +18,8 @@ aesthetic detail is applied inside them (see the `frontend-design` skill).
 2. **Offer choices.** When there's a real design decision, produce **2–3 distinct options** as separate
    files — `<DRAFT_DIR>/<feature>-option-a.html`, `-option-b.html`, … — and present them: end the
    message with a **clickable link to every mockup** (see *Link every mockup* below) **and** ask which
-   to pick (an `AskUserQuestion`). Build the options **in parallel** via the `parallel-subtasks` skill
-   (one agent per option).
+   to pick (an `AskUserQuestion`). Write the options yourself — they are small files, and an agent per
+   option costs far more than it saves (see the `parallel-subtasks` skill for the rare exception).
 
 3. **Wait for the pick.** Do **not** implement the real component until the user chooses (they may also
    request tweaks to a mockup first). After a tweak, link the updated file again.
@@ -45,7 +45,7 @@ so the user can open it with one click in the Claude Code VS Code extension:
 - **Spaces in the path:** wrap the target in angle brackets — `[name](<draft/my mockup.html>)`.
 - **Put the links in the message text, last,** right before the `AskUserQuestion` — not only inside
   the dialog's options. One mockup still gets its link.
-- **The same goes for subagents' work.** When agents build the options, the main agent writes the links
+- **The same goes for subagents' work.** If agents built the options, the main agent writes the links
   after collecting their results.
 
 ## Folder
