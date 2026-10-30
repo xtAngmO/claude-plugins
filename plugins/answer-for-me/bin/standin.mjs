@@ -17,7 +17,7 @@
 import fs from "node:fs";
 import { claudeHome, readSessions } from "../src/sessions.mjs";
 import {
-  activate, activeFor, askExists, deactivate, listActive, parsePickArgs, pendingAsks, readAsk, readOutcome,
+  activate, activeFor, askDirs, askExists, deactivate, listActive, parsePickArgs, pendingAsks, readAsk, readOutcome,
   resolvePicks, writeAnswer,
 } from "../src/standin.mjs";
 
@@ -108,7 +108,7 @@ switch (cmd) {
     if (!act.length) console.log("no live stand-in");
     for (const m of act) console.log(`stand-in ${m.name} covers ${m.project} since ${new Date(m.since).toISOString()}`);
     for (const a of pendingAsks({ home })) {
-      const who = activeFor({ home, cwd: a.cwd, sessionId: a.sessionId })?.name;
+      const who = activeFor({ home, cwd: askDirs(a, readSessions(home)), sessionId: a.sessionId })?.name;
       console.log(`${describe(a)}\n  -> ${who ? `stand-in ${who}` : "no stand-in covers it; the user's dialog"}`);
     }
     break;
@@ -137,7 +137,7 @@ switch (cmd) {
     try {
       const picks = file ? JSON.parse(fs.readFileSync(file, "utf8")) : parsePickArgs(rest);
       const answers = resolvePicks(ask.questions, picks);
-      const by = activeFor({ home, cwd: ask.cwd, sessionId: ask.sessionId })?.name;
+      const by = activeFor({ home, cwd: askDirs(ask, readSessions(home)), sessionId: ask.sessionId })?.name;
       writeAnswer(id, { answers, by, at: Date.now() }, home);
       for (const [q, a] of Object.entries(answers)) console.log(`${q} -> ${a}`);
     } catch (e) {

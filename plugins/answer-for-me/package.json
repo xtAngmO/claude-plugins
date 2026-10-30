@@ -1,6 +1,6 @@
 {
   "name": "answer-for-me",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Stand in for the user across this project's other Claude Code sessions.",
   "type": "module",

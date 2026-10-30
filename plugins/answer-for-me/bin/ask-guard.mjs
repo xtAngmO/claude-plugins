@@ -34,13 +34,16 @@ async function main() {
   const cwd = input.cwd || process.cwd();
   const sessionId = input.session_id;
   const subagent = Boolean(input.agent_id);
-  if (subagent && !activeFor({ home, cwd, sessionId })) return;
-
   const me = readSessions(home).find((s) => s.sessionId === sessionId);
+  // A session working in a folder added to it asks from that folder; its root
+  // (the session file's cwd) is still its project, so a stand-in there covers it.
+  const dirs = [...new Set([cwd, me?.cwd].filter(Boolean))];
+  if (subagent && !activeFor({ home, cwd: dirs, sessionId })) return;
+
   const waitS = Number(process.env.ANSWER_FOR_ME_WAIT_SECONDS) || (subagent ? 600 : 86000);
   const deadline = Date.now() + waitS * 1000;
   const id = createAsk({
-    home, sessionId, sessionName: me?.name, sessionPid: me?.pid, agentId: input.agent_id, cwd, questions,
+    home, sessionId, sessionName: me?.name, sessionPid: me?.pid, agentId: input.agent_id, cwd, dirs, questions,
   });
   // A subagent's tool calls are in its own transcript, not in transcript_path.
   const dialog = subagent ? null : new DialogWatch(input.transcript_path, questions);
@@ -51,7 +54,7 @@ async function main() {
       const answer = readAnswer(id, home);
       if (answer) {
         if (answer.pass || !answer.answers) { outcome = "passed"; return; }
-        const by = answer.by || activeFor({ home, cwd, sessionId })?.name;
+        const by = answer.by || activeFor({ home, cwd: dirs, sessionId })?.name;
         process.stdout.write(JSON.stringify(allowOutput(questions, answer.answers, by)));
         outcome = "delivered";
         return;

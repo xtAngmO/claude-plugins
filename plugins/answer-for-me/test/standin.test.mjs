@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  activate, activeFor, allowOutput, askLive, closeAsk, createAsk, deactivate, parsePickArgs, pendingAsks, pickStandIn,
+  activate, activeFor, allowOutput, askDirs, askLive, closeAsk, createAsk, deactivate, parsePickArgs, pendingAsks, pickStandIn,
   readAnswer, readOutcome, resolvePicks, writeAnswer,
 } from "../src/standin.mjs";
 
@@ -96,6 +96,26 @@ test("pendingAsks: a nested stand-in takes its own project's asks", () => {
   assert.deepEqual(pendingAsks({ home, standIn: { sessionId: "o" } }).map((x) => x.id), [inOuter]);
 });
 
+test("pendingAsks: a session asking from a folder added to it is still its project's", () => {
+  const home = tmp();
+  const project = path.join(home, "macore");
+  const added = path.join(home, "bot-facebook");
+  activate({ home, project, name: "me", sessionId: "s-me", pid: process.pid });
+  const me = { sessionId: "s-me" };
+  const sessions = [{ sessionId: "x", cwd: project }, { sessionId: "y", cwd: added }];
+  const saved = createAsk({ home, sessionId: "z", cwd: added, dirs: [project], questions: QUESTIONS });
+  // An ask written by a 1.2.0 hook has no `dirs`; the session file gives the root.
+  const legacy = path.join(home, "answer-for-me", "asks", "legacy-1.json");
+  fs.writeFileSync(legacy, JSON.stringify({
+    id: "legacy-1", sessionId: "x", cwd: added, questions: QUESTIONS, hookPid: process.pid, createdAt: Date.now() + 1,
+  }));
+  const foreign = createAsk({ home, sessionId: "y", cwd: added, questions: QUESTIONS });
+  assert.deepEqual(pendingAsks({ home, standIn: me, sessions }).map((a) => a.id), [saved, "legacy-1"]);
+  assert.equal(pendingAsks({ home, standIn: me, sessions }).some((a) => a.id === foreign), false,
+    "a session rooted in the other repo is not this project's");
+  assert.deepEqual(askDirs({ sessionId: "x", cwd: added }, sessions), [added, project]);
+});
+
 test("pendingAsks: leftovers of dead hooks and old outcomes are removed, unless sweep is off", () => {
   const home = tmp();
   const now = Date.now();
@@ -178,6 +198,21 @@ test("ask-guard: a dialog opened before the stand-in went on duty still gets its
   assert.match(h.decision.updatedInput.annotations["Which color?"].notes, /^Answered by me,/);
   assert.equal(readOutcome(ask.id, home).outcome, "delivered");
   assert.deepEqual(pendingAsks({ home }), []);
+});
+
+test("ask-guard: saves the session's root when it asks from an added folder", async () => {
+  const { home, project, input } = setup();
+  const added = path.join(home, "other-repo");
+  fs.mkdirSync(path.join(home, "sessions"));
+  fs.writeFileSync(path.join(home, "sessions", `${process.pid}.json`),
+    JSON.stringify({ pid: process.pid, sessionId: "asker", name: "asker-1", cwd: project }));
+  const run = startGuard(home, { ...input, cwd: added });
+  const ask = await waitForAsk(home);
+  assert.deepEqual(ask.dirs, [added, project]);
+  activate({ home, project, name: "me", sessionId: "s-me", pid: process.pid });
+  assert.deepEqual(pendingAsks({ home, standIn: { sessionId: "s-me" }, sessions: [] }).map((a) => a.id), [ask.id]);
+  writeAnswer(ask.id, { pass: true }, home);
+  assert.deepEqual(await run.done, { code: 0, out: "" });
 });
 
 test("ask-guard: the user answers in the dialog first -> the hook leaves quietly", async () => {

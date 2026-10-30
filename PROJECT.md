@@ -148,6 +148,10 @@ alone with fakes (`test/router.test.mjs`, `test/broker.test.mjs`).
 - **Sessions started before 1.2.0 keep the 1.1.0 PreToolUse hook** until they restart, so a dialog they open
   while no stand-in is on stays the user's. A 1.1.0 hook's ask is still answered by a 1.2.0 stand-in that was
   already on: same asks directory, same answer file.
+- **An ask belongs to every folder of its session (1.2.1).** With a folder added in the desktop app, the
+  hook's `cwd` can be the added repo while the session file's `cwd` is still the project root. Routing by the
+  hook's `cwd` alone left such a dialog with no stand-in. Now the hook saves `dirs` (its `cwd` and the session
+  root), and `askDirs` adds the session file's `cwd` at read time, so asks from an older hook route too.
 - **The hook must never break a session:** every path exits 0, and no output means the user's dialog decides. In
   a subagent, without a live stand-in marker (pid alive) for the session's cwd, it returns before touching
   anything.

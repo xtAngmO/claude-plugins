@@ -10,8 +10,9 @@
 //   1. The hook writes the questions to <home>/answer-for-me/asks/<id>.json the
 //      moment the dialog opens, whether or not a stand-in is on, and waits.
 //   2. A stand-in registers itself:  <home>/answer-for-me/active/<key>.json
-//      (project root, its name, sessionId and pid). Every ask whose cwd is in
-//      its project is now its own, including asks written before it came on.
+//      (project root, its name, sessionId and pid). Every ask with a folder in
+//      its project (the hook's cwd, or the asking session's root) is now its
+//      own, including asks written before it came on.
 //   3. The stand-in (watching asks/) writes asks/<id>.answer.json.
 //   4. The hook returns `allow` with `updatedInput.answers`: the tool resolves
 //      with those answers and the dialog closes. If the user answers in the
@@ -23,7 +24,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { claudeHome, inScope, pidAlive } from "./sessions.mjs";
+import { claudeHome, inScope, pidAlive, readSessions } from "./sessions.mjs";
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -75,10 +76,13 @@ export function listActive({ home = claudeHome(), alive = pidAlive } = {}) {
 
 // Of the live stand-in markers, the one that covers `cwd`, unless it is the
 // asking session itself. The most specific project root wins when stand-ins
-// are nested.
+// are nested. `cwd` may be a list: a session that works in a folder added to
+// it (the desktop app's "add folder") asks from that folder, while its own
+// root is still the project's; a stand-in covering either one takes the ask.
 export function pickStandIn(markers, cwd, sessionId, platform = process.platform) {
+  const dirs = [].concat(cwd).filter(Boolean);
   const hits = markers
-    .filter((m) => m.sessionId !== sessionId && inScope(cwd, m.project, platform))
+    .filter((m) => m.sessionId !== sessionId && dirs.some((d) => inScope(d, m.project, platform)))
     .sort((a, b) => b.project.length - a.project.length);
   return hits[0] || null;
 }
@@ -87,15 +91,24 @@ export function activeFor({ home = claudeHome(), cwd, sessionId, alive = pidAliv
   return pickStandIn(listActive({ home, alive }), cwd, sessionId, platform);
 }
 
+// Every folder an ask belongs to: the hook's cwd, the folders the hook saved
+// (`dirs`, since 1.2.1), and the asking session's root from its session file.
+// The last one also routes asks written by an older hook that saved only cwd.
+export function askDirs(ask, sessions = []) {
+  const own = sessions.find((s) => s.sessionId === ask.sessionId);
+  return [...new Set([ask.cwd, ...(ask.dirs || []), own?.cwd].filter(Boolean))];
+}
+
 // Written by the hook when its dialog opens. `hookPid` lets a reader drop the
 // ask of a hook that was killed before it could clean up.
 export function createAsk({
-  home = claudeHome(), sessionId, sessionName, sessionPid, agentId, cwd, questions, hookPid = process.pid, now = Date.now(),
+  home = claudeHome(), sessionId, sessionName, sessionPid, agentId, cwd, dirs, questions, hookPid = process.pid,
+  now = Date.now(),
 }) {
   const id = `${now.toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
   writeJson(askFile(home, id), {
     id, sessionId, sessionName: sessionName || null, sessionPid: sessionPid || null, agentId: agentId || null,
-    cwd, questions, hookPid, createdAt: now,
+    cwd, dirs: [...new Set([cwd, ...(dirs || [])].filter(Boolean))], questions, hookPid, createdAt: now,
   });
   return id;
 }
@@ -127,16 +140,19 @@ export function askLive(ask, { now = Date.now(), alive = pidAlive } = {}) {
 }
 
 // Asks still waiting for an answer, oldest first. With `standIn`, only the
-// ones routed to it: their cwd is in its project, they are not its own, and no
-// more specific stand-in covers them (`markers`: the live stand-ins). An ask
-// whose hook is gone is a leftover and is removed, as are outcome files older
-// than an hour; `sweep: false` only reads.
+// ones routed to it: one of their folders (askDirs) is in its project, they
+// are not its own, and no more specific stand-in covers them (`markers`: the
+// live stand-ins; `sessions`: the session files). An ask whose hook is gone is
+// a leftover and is removed, as are outcome files older than an hour;
+// `sweep: false` only reads.
 export function pendingAsks({
-  home = claudeHome(), standIn, markers, now = Date.now(), alive = pidAlive, platform = process.platform, sweep = true,
+  home = claudeHome(), standIn, markers, sessions, now = Date.now(), alive = pidAlive, platform = process.platform,
+  sweep = true,
 } = {}) {
   let names = [];
   try { names = fs.readdirSync(asksDir(home)); } catch { return []; }
   if (standIn && !markers) markers = listActive({ home, alive });
+  if (standIn && !sessions) sessions = readSessions(home);
   const out = [];
   for (const n of names) {
     if (n.endsWith(".done.json")) {
@@ -149,7 +165,9 @@ export function pendingAsks({
     if (!ask) continue;
     if (!askLive(ask, { now, alive })) { if (sweep) closeAsk(ask.id, home); continue; }
     if (fs.existsSync(askFile(home, ask.id, ".answer"))) continue;
-    if (standIn && pickStandIn(markers, ask.cwd, ask.sessionId, platform)?.sessionId !== standIn.sessionId) continue;
+    if (standIn && pickStandIn(markers, askDirs(ask, sessions), ask.sessionId, platform)?.sessionId !== standIn.sessionId) {
+      continue;
+    }
     out.push(ask);
   }
   return out.sort((a, b) => a.createdAt - b.createdAt);

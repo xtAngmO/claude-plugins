@@ -36,6 +36,9 @@ dialog, or the stand-in.
 - **Every dialog is offered.** When a dialog opens, the hook writes its questions to
   `~/.claude/answer-for-me/asks/<id>.json`, whether or not a stand-in is on, and waits. A stand-in that goes on
   duty later (`standin.mjs on`) still sees the dialogs that are already open.
+- **Added folders count.** A session you gave another folder (the desktop app's "add folder") may ask from
+  that folder. The ask still belongs to the session's own root (`cwd` in `~/.claude/sessions/<pid>.json`), so
+  a stand-in on duty at either one gets it.
 - **The dialog is always on your screen,** even when a stand-in is on. You can still answer it yourself.
 - **The stand-in answers:** it sees the ask through `standin.mjs watch` and answers with
   `standin.mjs answer <id> 1=2 2=1,3`. The hook returns `allow` with the answers, the tool resolves with them and
